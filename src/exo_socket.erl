@@ -182,7 +182,11 @@ connect(Host, Port, Protos=[tcp|_], Opts0, Timeout) -> %% tcp socket
 			      tags     = {tcp,tcp_closed,tcp_error}
 			    },
 	    case connect_upgrade(X, tl(Protos), Timeout) of
-		{ok, X1} -> maybe_auth(X1, client, Opts2);
+		{ok, X1} -> 
+		    case maybe_auth(X1, client, Opts2) of
+			{ok, X2} -> maybe_flow_control(X2);
+			Error -> Error
+		    end;
 		Error -> Error
 	    end;
 	Error ->
@@ -371,13 +375,15 @@ async_socket(Listen, Socket, AuthOpts, Timeout)
 		    case accept_upgrade(X,
 					tl(X#exo_socket.protocol), 
 					Timeout) of
-			{ok, X1} ->
-			    case X1#exo_socket.flow of
-				undefined ->  do_nothing;
-				Flow -> ok = exo_flow:new(Socket, Flow)
-			    end,
-			    maybe_auth(X1,server,
-				       X#exo_socket.opts ++ AuthOpts);
+			{ok, X1} -> 
+			    case maybe_auth(X1,server,
+					    X#exo_socket.opts ++ AuthOpts) of
+				{ok, X2} -> 
+				    maybe_flow_control(X2);
+				Error ->
+				    prim_inet:close(Socket),
+				    Error
+			    end;
 			Error ->
 			    prim_inet:close(Socket),
 			    Error
@@ -515,7 +521,11 @@ ssl_accept(Socket, Options, Timeout) ->
 	    {error, einval}
     end.
 
-
+maybe_flow_control(Socket=#exo_socket {flow = undefined}) ->
+    {ok, Socket};
+maybe_flow_control(Socket=#exo_socket {flow = Flow, transport = T}) ->
+    exo_flow:new(T, Flow),
+    {ok, Socket}.
 
 request_type(<<"GET", _/binary>>) ->    http;
 request_type(<<"POST", _/binary>>) ->    http;

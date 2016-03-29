@@ -122,6 +122,7 @@ stop() ->
 		 {error, Error::atom()}.
 
 new(Key, Policy) when is_atom(Policy) ->
+    lager:debug("new key = ~p, ~p", [Key, Policy]),
     case new_bucket({in, Key}, Policy) of
 	ok ->
 	    case new_bucket({out, Key}, Policy) of
@@ -142,7 +143,7 @@ new(Key, Policy) when is_atom(Policy) ->
 
 delete({Direction, _K} = Key) when Direction =:= in;
 				   Direction =:= out ->
-    lager:debug("key = ~p", [Key]),
+    lager:debug("delete key = ~p", [Key]),
     ets:delete(?BUCKETS, Key);
 delete(Key) ->
     delete({in, Key}),
@@ -161,7 +162,7 @@ delete(Key) ->
 
 use({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
-    lager:debug("key = ~p, tokens = ~p", [Key, Tokens]),
+    lager:debug("use key = ~p, tokens = ~p", [Key, Tokens]),
     use_tokens(Key, Tokens).
 
 %%--------------------------------------------------------------------
@@ -175,7 +176,7 @@ use({Direction, _K} = Key, Tokens)
 			   {error, Error::atom()}.
 
 fill({Direction, _K} = Key) when is_atom(Direction) ->
-    lager:debug("key = ~p", [Key]),
+    lager:debug("fill key = ~p", [Key]),
     case ets:lookup(?BUCKETS, Key) of
 	[B] when is_record(B, bucket) ->
 	   fill_bucket(B);
@@ -195,7 +196,7 @@ fill({Direction, _K} = Key) when is_atom(Direction) ->
 
 fill_time({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
-   lager:debug("key = ~p, tokens = ~p", [Key, Tokens]),
+   lager:debug("fill_time key = ~p, tokens = ~p", [Key, Tokens]),
    case ets:lookup(?BUCKETS, Key) of
 	[B] when is_record(B, bucket) ->
 	   bucket_fill_time(B, Tokens);
@@ -217,7 +218,7 @@ fill_time({Direction, _K} = Key, Tokens)
 
 wait({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
-   lager:debug("key = ~p, tokens = ~p", [Key, Tokens]),
+   lager:debug("wait key = ~p, tokens = ~p", [Key, Tokens]),
    case ets:lookup(?BUCKETS, Key) of
 	[{Key, B}] when is_record(B, bucket) ->
 	   bucket_wait(B, Tokens);
@@ -239,7 +240,7 @@ wait({Direction, _K} = Key, Tokens)
 
 fill_wait({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
-   lager:debug("key = ~p, tokens = ~p", [Key, Tokens]),
+   lager:debug("fill_wait key = ~p, tokens = ~p", [Key, Tokens]),
    case ets:lookup(?BUCKETS, Key) of
 	[{Key,B}] when is_record(B, bucket) ->
 	   bucket_wait(B, Tokens),
