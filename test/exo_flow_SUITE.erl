@@ -72,8 +72,8 @@ all() ->
      api,
      basic_wait,
      basic_throw,
-     socket_wait10,
-     socket_wait20
+     {group, socket_wait},
+     {group, socket_throw}
     ].
 
 %%--------------------------------------------------------------------
@@ -94,7 +94,10 @@ all() ->
       list(TestCases::atom())}].
 
 groups() ->
-    [{clear_and_load, [sequence], [clear, load]}].
+    [{socket_wait, [sequence], [socket_wait10, 
+				socket_wait20]},
+     {socket_throw, [sequence], [socket_throw10, 
+				 socket_throw20]}].
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -137,6 +140,20 @@ end_per_suite(_Config) ->
 			    {skip_and_save,Reason::term(),
 			     Config1::list(tuple())}.
 
+init_per_group(socket_wait = GroupName, Config) ->
+    ct:pal("TestGroup: ~p", [GroupName]),
+    exo_test_listener:start(?PORT1, 
+			    [{request_handler, {?MODULE, listener}},
+			     {debug, [exo_flow]},
+			     {flow, test1}]),
+    Config;
+init_per_group(socket_throw = GroupName, Config) ->
+    ct:pal("TestGroup: ~p", [GroupName]),
+    exo_test_listener:start(?PORT2, 
+			    [{request_handler, {?MODULE, listener}},
+			     {debug, [exo_flow]},
+			     {flow, test2}]),
+    Config;
 init_per_group(GroupName, Config) ->
     ct:pal("TestGroup: ~p", [GroupName]),
     Config.
@@ -151,6 +168,10 @@ init_per_group(GroupName, Config) ->
 			   no_return() | 
 			   {save_config, Config1::list(tuple())}.
 
+end_per_group(socket = GroupName, Config) ->
+    ct:pal("TestGroup: ~p", [GroupName]),
+    %% stop socket_server ??
+    Config;
 end_per_group(_GroupName, _Config) ->
     ok.
 
@@ -264,11 +285,7 @@ basic_throw(_Config) ->
 
 socket_wait10(_Config) ->
     %%ale:debug_gl(exo_socket),
-    %%ale:debug_gl(exo_socket_server),
-    exo_test_listener:start(?PORT1, 
-			    [{request_handler, {?MODULE, listener}},
-			     {debug, [exo_flow]},
-			     {flow, test1}]),
+    ale:debug_gl(exo_socket_session),
     {ok, Socket} = exo_socket:connect(localhost, ?PORT1, [{flow, test1}]),
     ct:pal("using ~p", [Socket]),
     T1 = erlang:monotonic_time(milli_seconds),
@@ -278,13 +295,13 @@ socket_wait10(_Config) ->
 	I when I > 1000 -> ct:fail("Too slow!");
 	I -> ct:pal("Time diff ~p milliseconds", [I])
     end,
+    timer:sleep(100),
     case exo_socket:recv(Socket, 0, 1000) of
-	{ok, "12345678910"} -> ct:pal("got expected", []);
+	{ok, "12345678910"} -> ok;
 	_Other -> ct:fail("got ~p", [_Other])
     end,
     exo_socket:send(Socket, "die"),
     exo_socket:close(Socket),
-    timer:sleep(1000),
     ok.
 
 %%--------------------------------------------------------------------
@@ -296,24 +313,75 @@ socket_wait10(_Config) ->
 
 socket_wait20(_Config) ->
     %%ale:debug_gl(exo_socket),
-    %%ale:debug_gl(exo_socket_server),
-    exo_test_listener:start(?PORT2, 
-			    [{request_handler, {?MODULE, listener}},
-			     {debug, [exo_flow]},
-			     {flow, test1}]),
-    {ok, Socket} = exo_socket:connect(localhost, ?PORT2, [{flow, test1}]),
+    ale:debug_gl(exo_socket_session),
+    {ok, Socket} = exo_socket:connect(localhost, ?PORT1, [{flow, test1}]),
     ct:pal("using ~p", [Socket]),
     T1 = erlang:monotonic_time(milli_seconds),
-    [exo_socket:send(Socket, I) || I <- lists:seq(1,20)],
+    [exo_socket:send(Socket, integer_to_list(I)) || I <- lists:seq(1,20)],
     T2 = erlang:monotonic_time(milli_seconds),
     case T2 - T1 of
 	I when I < 1000 -> ct:fail("Too fast!");
 	I when I > 2000 -> ct:fail("Too slow!");
 	I -> ct:pal("Time diff ~p milliseconds", [I])
     end,
-    timer:sleep(1000),
-    case exo_socket:recv(Socket, 0, 2000) of
-	{ok, Data} -> ct:pal("got ~p", [Data]);
+    timer:sleep(100),
+    case exo_socket:recv(Socket, 0, 1000) of
+	{ok, "1234567891011121314151617181920"} -> ok;
+	_Other -> ct:fail("got ~p", [_Other])
+    end,
+    exo_socket:send(Socket, "die"),
+    ok.
+     
+%%--------------------------------------------------------------------
+%% @doc 
+%% Socket throw test.
+%% @end
+%%--------------------------------------------------------------------
+-spec socket_throw10(Config::list(tuple())) -> ok.
+
+socket_throw10(_Config) ->
+    %%ale:debug_gl(exo_socket),
+    ale:debug_gl(exo_socket_session),
+    {ok, Socket} = exo_socket:connect(localhost, ?PORT2, [{flow, test2}]),
+    ct:pal("using ~p", [Socket]),
+    T1 = erlang:monotonic_time(milli_seconds),
+    [exo_socket:send(Socket, integer_to_list(I)) || I <- lists:seq(1,10)],
+    T2 = erlang:monotonic_time(milli_seconds),
+    case T2 - T1 of
+	I when I > 1000 -> ct:fail("Too slow!");
+	I -> ct:pal("Time diff ~p milliseconds", [I])
+    end,
+    timer:sleep(100),
+    case exo_socket:recv(Socket, 0, 1000) of
+	{ok, "12345678910"} -> ok;
+	_Other -> ct:fail("got ~p", [_Other])
+    end,
+    exo_socket:send(Socket, "die"),
+    exo_socket:close(Socket),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @doc 
+%% Socket throw test.
+%% @end
+%%--------------------------------------------------------------------
+-spec socket_throw20(Config::list(tuple())) -> ok.
+
+socket_throw20(_Config) ->
+    %%ale:debug_gl(exo_socket),
+    ale:debug_gl(exo_socket_session),
+    {ok, Socket} = exo_socket:connect(localhost, ?PORT2, [{flow, test2}]),
+    ct:pal("using ~p", [Socket]),
+    T1 = erlang:monotonic_time(milli_seconds),
+    [exo_socket:send(Socket, integer_to_list(I)) || I <- lists:seq(1,20)],
+    T2 = erlang:monotonic_time(milli_seconds),
+    case T2 - T1 of
+	I when I > 1000 -> ct:fail("Too slow!");
+	I -> ct:pal("Time diff ~p milliseconds", [I])
+    end,
+    timer:sleep(100),
+    case exo_socket:recv(Socket, 0, 1000) of
+	{ok, "12345678910"} -> ok;
 	_Other -> ct:fail("got ~p", [_Other])
     end,
     exo_socket:send(Socket, "die"),
