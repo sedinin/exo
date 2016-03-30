@@ -33,6 +33,7 @@
 %% functional api
 -export([new/2,
 	 delete/1,
+	 transfer/2,
 	 use/2,
 	 fill/1,
 	 fill_time/2,
@@ -54,7 +55,7 @@
 -define(BUCKETS, exo_token_buckets).
 -define(POLICIES, exo_token_policies).
 
-%% For dialyzer
+%% for dialyzer
 -type start_options()::{linked, TrueOrFalse::boolean()}.
 
 %% token bucket
@@ -69,11 +70,12 @@
 	  timestamp::integer()  %% last time
 	}).
 
-%% Loop data
+%% loop data
 -record(ctx,
 	{
 	  buckets::term(),
-	  policies::term()
+	  policies::term(),
+	  owners::term()
 	}).
 
 %%%===================================================================
@@ -126,8 +128,11 @@ new(Key, Policy) when is_atom(Policy) ->
     case new_bucket({in, Key}, Policy) of
 	ok ->
 	    case new_bucket({out, Key}, Policy) of
-		ok -> ok;
-		E -> delete({in, Key}), E
+		ok -> 
+		    gen_server:cast(?SERVER, {add, self(), Key}),
+		    ok;
+		E -> 
+		    delete({in, Key}), E
 	    end;
 	E ->
 	    E
@@ -139,7 +144,7 @@ new(Key, Policy) when is_atom(Policy) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec delete(Key::term()) -> true.
+-spec delete(Key::term()) -> ok.
 
 delete({Direction, _K} = Key) when Direction =:= in;
 				   Direction =:= out ->
@@ -147,7 +152,21 @@ delete({Direction, _K} = Key) when Direction =:= in;
     ets:delete(?BUCKETS, Key);
 delete(Key) ->
     delete({in, Key}),
-    delete({out, Key}).
+    delete({out, Key}),
+    gen_server:cast(?SERVER, {remove, Key}),
+    ok.
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Transfer a bucket.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec transfer(Key::term(), Owner::term()) -> ok.
+
+transfer(Key, Owner)  ->
+    lager:debug("transfer key = ~p, owner = ~p", [Key, Owner]),
+    gen_server:cast(?SERVER, {transfer, Key, Owner}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -279,11 +298,12 @@ init(Args) ->
     lager:debug("args = ~p,\n pid = ~p\n", [Args, self()]),
     BTab = ets:new(?BUCKETS, [named_table, public, {keypos, #bucket.key}]),
     PTab = ets:new(?POLICIES, [named_table, public, {keypos, #bucket.key}]),
+    OTab = ets:new(bucket_owners, [named_table]),
     lists:foreach(fun({PolicyName, Opts}) ->
 			  add_template(PolicyName, in, Opts),
 			  add_template(PolicyName, out, Opts)
 		  end, opt_get_env(exo, policies, [])),
-    {ok, #ctx {buckets = BTab, policies = PTab}}.
+    {ok, #ctx {buckets = BTab, policies = PTab, owners = OTab}}.
 
 
 %%--------------------------------------------------------------------
@@ -307,8 +327,8 @@ init(Args) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
-handle_call(dump, _From, Ctx=#ctx {buckets = B}) ->
-    io:format("Ctx: Buckets = ~p.", [ets:tab2list(B)]),
+handle_call(dump, _From, Ctx=#ctx {buckets = T}) ->
+    io:format("Ctx: Buckets = ~p.", [ets:tab2list(T)]),
     {reply, ok, Ctx};
 
 handle_call(stop, _From, Ctx) ->
@@ -333,6 +353,22 @@ handle_call(_Request, _From, Ctx) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
+handle_cast({add, Pid, Key} = _M, Ctx=#ctx {owners = Owners}) ->
+    lager:debug("message ~p", [_M]),
+    add_owner(Pid, Key, Owners),
+    {noreply, Ctx};
+
+handle_cast({remove, Key} = _M, Ctx=#ctx {owners = Owners}) ->
+    lager:debug("message ~p", [_M]),
+    remove_owner(Key, Owners),
+    {noreply,Ctx};
+
+handle_cast({transfer, Key, Pid} = _M, Ctx=#ctx {owners = Owners}) ->
+    lager:debug("message ~p", [_M]),
+    remove_owner(Key, Owners),
+    add_owner(Pid, Key, Owners),
+    {noreply,Ctx};
+
 handle_cast(_Msg, Ctx) ->
     lager:debug("unknown msg ~p.", [_Msg]),
     {noreply, Ctx}.
@@ -351,6 +387,20 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
+
+handle_info({'DOWN',Ref,process,_Pid,_Reason} = _I, Ctx=#ctx {owners = Owners}) ->
+   lager:debug("info ~p", [_I]),
+    case ets:lookup(Owners, Ref) of
+	[{Ref, Key}] ->
+	    erlang:demonitor(Ref, [flush]),
+	    ets:delete(?BUCKETS, {in, Key}),
+	    ets:delete(?BUCKETS, {out, Key}),
+	    ets:delete(Owners, Key),
+	    ets:delete(Owners, Ref);
+	_Other ->
+	    lager:debug("unexpected ~p", [_Other])
+    end,
+    {noreply, Ctx};
 
 handle_info(_Info, Ctx) ->
     lager:debug("unknown info ~p.", [_Info]),
@@ -479,6 +529,21 @@ bucket_wait(B, Tokens)  when is_record(B, bucket) ->
        true ->
 	    ok
     end.
+
+add_owner(Pid, Key, Owners) ->
+    Ref = erlang:monitor(process, Pid),
+    ets:insert(Owners, {Key, Ref}), %% For remove
+    ets:insert(Owners, {Ref, Key}). %% For crash
+ 
+remove_owner(Key, Owners) ->
+    case ets:lookup(Owners, Key) of
+	[{Key, Ref}] ->
+	    erlang:demonitor(Ref, [flush]),
+	    ets:delete(Owners, Key),
+	    ets:delete(Owners, Ref);
+	_Other ->
+	    lager:warning("unexpected owner lookup result ~p", [_Other])
+    end.	
 
 time_delta(T1, T0) ->
     (T1 - T0) / 1000000.
