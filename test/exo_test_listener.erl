@@ -85,8 +85,7 @@ start(Port, Options) ->
 do_start(F, Port, Options) ->
     ct:pal("port ~p",[Port]),
     exo_socket_server:F(Port,[tcp],
-			[{active,once},{reuseaddr,true},
-			 {verify, verify_none}],
+			[{active,once}, {verify, verify_none} | Options],
 			?MODULE, Options).
 
 
@@ -113,16 +112,11 @@ stop(Pid) ->
 		  {ok, State::#state{}}.
 
 init(Socket, Options) ->
-    ct:pal("~p: connection on: ~p ", [self(), Socket]),
     {ok, _PeerName} = exo_socket:peername(Socket),
     {ok, _SockName} = exo_socket:sockname(Socket),
-    ct:pal("connection from peer: ~p, sockname: ~p,\n"
-	   "options ~p", [_PeerName, _SockName, Options]),
     RH = proplists:get_value(request_handler, Options, ?MODULE),
-    case proplists:get_value(debug, Options, []) of
-	[] -> ok;
-	List -> ale:start(), ale:debug_gl(List)
-    end,
+    Packet = proplists:get_value(packet, Options, 0),
+    exo_socket:setopts(Socket, [{packet, Packet}]),
     {ok, #state{request_handler = RH}}.
 
 %% To avoid a compiler warning. 
@@ -152,7 +146,7 @@ control(_Socket, _Request, _From, State) ->
 		  {stop, {error, Reason::term()}, NewState::#state{}}.
 
 data(Socket, Data, State=#state {request_handler = RH}) ->
-    ct:pal("data = ~p\n", [Data]),
+    ct:pal("~p: data = ~p\n", [self(), Data]),
     case Data of
 	_ when is_list(Data); is_binary(Data) ->
 	    handle_data(RH, Socket, Data, State);
