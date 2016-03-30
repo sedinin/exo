@@ -45,6 +45,9 @@
 -export([convert_uri/1]).
 -export([tokens/1]).
 -export([get_authenticate/1]).
+-export([scan_tokens/1]).
+-export([parse_date/1, format_date/1]).
+-export([format_current_date/0]).
 
 -export([set_chdr/3,
 	 set_shdr/3]).
@@ -900,6 +903,30 @@ parse_query(Cs) ->
 	    {url_decode(Key0),true}
     end || Kv <- string:tokens(Cs, "&")].
 
+%% scan (comma) separated value  "*", "abcd" [, "fghi"]*
+%% FIXME , must be able to handle empty values
+scan_tokens(undefined) ->
+    undefined;
+scan_tokens(Cs) ->
+    scan_tokens(Cs,[]).
+
+scan_tokens([$\s|Cs],Acc) -> scan_tokens(Cs,Acc);
+scan_tokens([$\t|Cs],Acc) -> scan_tokens(Cs,Acc);
+scan_tokens([$,|Cs],Acc) -> scan_tokens(Cs,Acc);
+scan_tokens([$"|Cs],Acc) -> scan_string(Cs,[],Acc);
+scan_tokens([C|Cs],Acc) -> scan_token(Cs,[C],Acc);
+scan_tokens([],Acc) -> lists:reverse(Acc).
+
+scan_string([$"|Cs],Ds,Acc) -> scan_tokens(Cs, [lists:reverse(Ds) | Acc]);
+scan_string([C|Cs],Ds,Acc) -> scan_string(Cs,[C|Ds],Acc);
+scan_string([],Ds,Acc) -> scan_tokens([], [lists:reverse(Ds) | Acc]).
+
+scan_token([$\s|Cs],Ds,Acc) -> scan_tokens(Cs,[lists:reverse(Ds)|Acc]);
+scan_token([$\t|Cs],Ds,Acc) -> scan_tokens(Cs,[lists:reverse(Ds)|Acc]);
+scan_token([$,|Cs],Ds,Acc) -> scan_tokens(Cs,[lists:reverse(Ds)|Acc]);
+scan_token([C|Cs],Ds,Acc) -> scan_token(Cs,[C|Ds],Acc);
+scan_token([],Ds,Acc) -> scan_tokens([],[lists:reverse(Ds)|Acc]).
+
 trim(Cs) ->
     reverse(trim_(reverse(trim_(Cs)))).
 
@@ -1227,3 +1254,151 @@ kd(Secret, Data) ->
 hex(Bin) ->
     [ element(X+1, {$0,$1,$2,$3,$4,$5,$6,$7,$8,$9,$a,$b,$c,$d,$e,$f}) ||
 	<<X:4>> <= Bin ].
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% decode http-date (RFC 2068). (MUST be send in RFC1123 date format)
+%%          HTTP-date    = rfc1123-date | rfc850-date | asctime-date
+%%          rfc1123-date = wkday "," SP date1 SP time SP "GMT"
+%%          rfc850-date  = weekday "," SP date2 SP time SP "GMT"
+%%          asctime-date = wkday SP date3 SP time SP 4DIGIT
+%%
+%%          date1        = 2DIGIT SP month SP 4DIGIT
+%%                         ; day month year (e.g., 02 Jun 1982)
+%%          date2        = 2DIGIT "-" month "-" 2DIGIT
+%%                         ; day-month-year (e.g., 02-Jun-82)
+%%          date3        = month SP ( 2DIGIT | ( SP 1DIGIT ))
+%%                         ; month day (e.g., Jun  2)
+%%
+%%          time         = 2DIGIT ":" 2DIGIT ":" 2DIGIT
+%%                         ; 00:00:00 - 23:59:59
+%%
+%%          wkday        = "Mon" | "Tue" | "Wed"
+%%                       | "Thu" | "Fri" | "Sat" | "Sun"
+%%
+%%
+%%          weekday      = "Monday" | "Tuesday" | "Wednesday"
+%%                       | "Thursday" | "Friday" | "Saturday" | "Sunday"
+%%
+%%          month        = "Jan" | "Feb" | "Mar" | "Apr"
+%%                       | "May" | "Jun" | "Jul" | "Aug"
+%%                       | "Sep" | "Oct" | "Nov" | "Dec"
+%%
+%% decode date or crash!
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+parse_date(Line) -> dec_http_date(string:to_lower(Line)).
+
+dec_http_date([$m,$o,$n,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$t,$u,$e,$s,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$w,$e,$d,$n,$s,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$t,$h,$u,$r,$s,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$f,$r,$i,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$s,$a,$t,$u,$r,$d,$a,$y,$\s  | Cs]) -> dec_date2(Cs);
+dec_http_date([$s,$u,$n,$d,$a,$y,$\s | Cs]) -> dec_date2(Cs);
+dec_http_date([$m,$o,$n,X | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$t,$u,$e,X  | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$w,$e,$d,X  | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$t,$h,$u,X  | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$f,$r,$i,X  | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$s,$a,$t,X  | Cs]) -> dec_date13(X,Cs);
+dec_http_date([$s,$u,$n,X  | Cs]) -> dec_date13(X,Cs).
+
+dec_date13($\s, Cs) -> dec_date3(Cs);
+dec_date13($,, [$\s|Cs]) -> dec_date1(Cs).
+
+%% date1
+dec_date1([D1,D2,$\s,M1,M2,M3,$\s,Y1,Y2,Y3,Y4,$\s | Cs]) ->
+    M = dec_month(M1,M2,M3),
+    D = lti(D1,D2),
+    Y = lti(Y1,Y2,Y3,Y4),
+    {Time,[$\s,$g,$m,$t|Cs1]} = dec_time(Cs),
+    { {{Y,M,D},Time}, Cs1}.
+
+%% date2
+dec_date2([D1,D2,$-,M1,M2,M3,$-,Y1,Y2 | Cs]) ->
+    M = dec_month(M1,M2,M3),
+    D = lti(D1,D2),
+    Y = 1900 + lti(Y1,Y2),
+    {Time, [$\s,$g,$m,$t|Cs1]} = dec_time(Cs),
+    {{{Y,M,D}, Time}, Cs1}.
+
+%% date3
+dec_date3([M1,M2,M3,$\s,D1,D2,$\s| Cs]) ->
+    M = dec_month(M1,M2,M3),
+    D = if D1 =:= $\s -> lti(D2);
+	   true -> lti(D1,D2)
+	end,
+    {Time,[$\s,Y1,Y2,Y3,Y4|Cs1]} = dec_time(Cs),
+    Y = lti(Y1,Y2,Y3,Y4),
+    { {{Y,M,D}, Time}, Cs1 }.
+
+%% decode lowercase month
+dec_month($j,$a,$n) -> 1;
+dec_month($f,$e,$b) -> 2;
+dec_month($m,$a,$r) -> 3;
+dec_month($a,$p,$r) -> 4;
+dec_month($m,$a,$y) -> 5;
+dec_month($j,$u,$n) -> 6;
+dec_month($j,$u,$l) -> 7;
+dec_month($a,$u,$g) -> 8;
+dec_month($s,$e,$p) -> 9;
+dec_month($o,$c,$t) -> 10;
+dec_month($n,$o,$v) -> 11;
+dec_month($d,$e,$c) -> 12.
+
+%% decode time HH:MM:SS
+dec_time([H1,H2,$:,M1,M2,$:,S1,S2|Cs]) ->
+    { {lti(H1,H2), lti(M1,M2), lti(S1,S2) }, Cs}.
+
+
+format_current_date() ->
+    format_date(calendar:universal_time()).
+
+%% encode date into rfc1123-date (must be a GMT time!!!)
+format_date({{Y,M,D},{TH,TM,TS}}) ->
+    WkDay = case calendar:day_of_the_week({Y,M,D}) of
+		1 -> "Mon";
+		2 -> "Tue";
+		3 -> "Wed";
+		4 -> "Thu";
+		5 -> "Fri";
+		6 -> "Sat";
+		7 -> "Sun"
+	    end,
+    [WkDay, $,,
+     $\s, itl_2_0(D),
+     $\s, enc_month(M),
+     $\s, itl_4_0(Y),
+     $\s, itl_2_0(TH),
+     $:, itl_2_0(TM),
+     $:, itl_2_0(TS),
+     " GMT"].
+
+itl_2_0(I) ->  %% ~2..0w
+    tl(integer_to_list(100 + I)).
+
+itl_4_0(I) ->  %% ~4..0w
+    tl(integer_to_list(10000 + I)).
+
+lti(D1) ->
+    (D1-$0).
+
+lti(D1, D2) ->
+    (D1-$0)*10 + (D2-$0).
+
+lti(D1, D2, D3, D4) ->
+    100*lti(D1,D2) + lti(D3, D4).
+
+%% encode month
+enc_month(1) -> "Jan";
+enc_month(2) -> "Feb";
+enc_month(3) -> "Mar";
+enc_month(4) -> "Apr";
+enc_month(5) -> "May";
+enc_month(6) -> "Jun";
+enc_month(7) -> "Jul";
+enc_month(8) -> "Aug";
+enc_month(9) -> "Sep";
+enc_month(10) -> "Oct";
+enc_month(11) -> "Nov";
+enc_month(12) -> "Dec".
