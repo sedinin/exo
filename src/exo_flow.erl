@@ -119,23 +119,28 @@ stop() ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec new(Key::term() , Policy::atom()) -> 
+-spec new(Key::term(), Policy::atom()) -> 
 		 ok | 
 		 {error, Error::atom()}.
 
 new(Key, Policy) when is_atom(Policy) ->
     lager:debug("new key = ~p, ~p", [Key, Policy]),
-    case new_bucket({in, Key}, Policy) of
-	ok ->
-	    case new_bucket({out, Key}, Policy) of
-		ok -> 
-		    gen_server:cast(?SERVER, {add, self(), Key}),
-		    ok;
-		E -> 
-		    delete({in, Key}), E
+    case is_up() of
+	true ->
+	    case new_bucket({in, Key}, Policy) of
+		ok ->
+		    case new_bucket({out, Key}, Policy) of
+			ok -> 
+			    gen_server:cast(?SERVER, {add, self(), Key}),
+			    ok;
+			E -> 
+			    delete({in, Key}), E
+		    end;
+		E ->
+		    E
 	    end;
-	E ->
-	    E
+	false ->
+	    {error, not_up}
     end.
 
 %%--------------------------------------------------------------------
@@ -144,17 +149,23 @@ new(Key, Policy) when is_atom(Policy) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec delete(Key::term()) -> ok.
+-spec delete(Key::term()) -> 
+		    ok | 
+		    {error, Error::atom()}.
 
 delete({Direction, _K} = Key) when Direction =:= in;
 				   Direction =:= out ->
     lager:debug("delete key = ~p", [Key]),
     ets:delete(?BUCKETS, Key);
 delete(Key) ->
-    delete({in, Key}),
-    delete({out, Key}),
-    gen_server:cast(?SERVER, {remove, Key}),
-    ok.
+   case is_up() of
+	true ->
+	   delete({in, Key}),
+	   delete({out, Key}),
+	   gen_server:cast(?SERVER, {remove, Key});
+	false ->
+	    {error, not_up}
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -182,7 +193,12 @@ transfer(Key, Owner)  ->
 use({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
     lager:debug("use key = ~p, tokens = ~p", [Key, Tokens]),
-    use_tokens(Key, Tokens).
+    case is_up() of
+	true ->
+	    use_tokens(Key, Tokens);
+	false ->
+	    {error, not_up}
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -196,11 +212,16 @@ use({Direction, _K} = Key, Tokens)
 
 fill({Direction, _K} = Key) when is_atom(Direction) ->
     lager:debug("fill key = ~p", [Key]),
-    case ets:lookup(?BUCKETS, Key) of
-	[B] when is_record(B, bucket) ->
-	   fill_bucket(B);
-	[] ->
-	   {error, unknown_key}
+    case is_up() of
+	true ->
+	    case ets:lookup(?BUCKETS, Key) of
+		[B] when is_record(B, bucket) ->
+		    fill_bucket(B);
+		[] ->
+		    {error, unknown_key}
+	    end;
+	false ->
+	    {error, not_up}
     end.
 
 %%--------------------------------------------------------------------
@@ -215,12 +236,17 @@ fill({Direction, _K} = Key) when is_atom(Direction) ->
 
 fill_time({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
-   lager:debug("fill_time key = ~p, tokens = ~p", [Key, Tokens]),
-   case ets:lookup(?BUCKETS, Key) of
-	[B] when is_record(B, bucket) ->
-	   bucket_fill_time(B, Tokens);
-	[] ->
-	    {error, unknown_key}
+    lager:debug("fill_time key = ~p, tokens = ~p", [Key, Tokens]),
+    case is_up() of
+	true ->
+	    case ets:lookup(?BUCKETS, Key) of
+		[B] when is_record(B, bucket) ->
+		    bucket_fill_time(B, Tokens);
+		[] ->
+		    {error, unknown_key}
+	    end;
+	false ->
+	    {error, not_up}
     end.
 
 
@@ -238,11 +264,16 @@ fill_time({Direction, _K} = Key, Tokens)
 wait({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
    lager:debug("wait key = ~p, tokens = ~p", [Key, Tokens]),
-   case ets:lookup(?BUCKETS, Key) of
-	[{Key, B}] when is_record(B, bucket) ->
-	   bucket_wait(B, Tokens);
-	[] ->
-	    {error, unknown_key}
+    case is_up() of
+	true ->
+	    case ets:lookup(?BUCKETS, Key) of
+		[{Key, B}] when is_record(B, bucket) ->
+		    bucket_wait(B, Tokens);
+		[] ->
+		    {error, unknown_key}
+	    end;
+	false ->
+	    {error, not_up}
     end.
 	    	    
 %%--------------------------------------------------------------------
@@ -260,12 +291,17 @@ wait({Direction, _K} = Key, Tokens)
 fill_wait({Direction, _K} = Key, Tokens) 
   when is_number(Tokens), is_atom(Direction) ->
    lager:debug("fill_wait key = ~p, tokens = ~p", [Key, Tokens]),
-   case ets:lookup(?BUCKETS, Key) of
-	[{Key,B}] when is_record(B, bucket) ->
-	   bucket_wait(B, Tokens),
-	   fill_bucket(B);
-	[] ->
-	    {error, unknown_key}
+    case is_up() of
+	true ->
+	    case ets:lookup(?BUCKETS, Key) of
+		[{Key,B}] when is_record(B, bucket) ->
+		    bucket_wait(B, Tokens),
+		    fill_bucket(B);
+		[] ->
+		    {error, unknown_key}
+	    end;
+	false ->
+	    {error, not_up}
     end.
 
 %%--------------------------------------------------------------------
@@ -390,13 +426,12 @@ handle_cast(_Msg, Ctx) ->
 
 handle_info({'DOWN',Ref,process,_Pid,_Reason} = _I, Ctx=#ctx {owners = Owners}) ->
    lager:debug("info ~p", [_I]),
-    case ets:lookup(Owners, Ref) of
+    case ets:take(Owners, Ref) of
 	[{Ref, Key}] ->
 	    erlang:demonitor(Ref, [flush]),
 	    ets:delete(?BUCKETS, {in, Key}),
 	    ets:delete(?BUCKETS, {out, Key}),
-	    ets:delete(Owners, Key),
-	    ets:delete(Owners, Ref);
+	    ets:delete(Owners, Key);
 	_Other ->
 	    lager:debug("unexpected ~p", [_Other])
     end,
@@ -433,6 +468,12 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+is_up() ->
+    case ets:info(?BUCKETS) of
+	Info when is_list(Info) -> true;
+	undefined -> false
+    end.
+
 add_template(PolicyName, Direction, Opts) ->
     case proplists:get_value(Direction, Opts) of
 	[] -> do_nothing;
@@ -536,13 +577,12 @@ add_owner(Pid, Key, Owners) ->
     ets:insert(Owners, {Ref, Key}). %% For crash
  
 remove_owner(Key, Owners) ->
-    case ets:lookup(Owners, Key) of
+    case ets:take(Owners, Key) of
 	[{Key, Ref}] ->
 	    erlang:demonitor(Ref, [flush]),
-	    ets:delete(Owners, Key),
 	    ets:delete(Owners, Ref);
 	_Other ->
-	    lager:warning("unexpected owner lookup result ~p", [_Other])
+	    lager:warning("unexpected owner take result ~p", [_Other])
     end.	
 
 time_delta(T1, T0) ->
