@@ -37,7 +37,9 @@
 
 -include("../src/exo_socket.hrl").
 
--export([start/2]).
+-export([start/2,
+	 start_link/2, 
+	 stop/1]).
 
 -record(state,
 	{
@@ -56,18 +58,49 @@
 %%
 %% @end
 %%-----------------------------------------------------------------------------
+-spec start_link(Port::integer(),
+		 ServerOptions::list({Option::atom(), Value::term()})) ->
+		   {ok, ChildPid::pid()} |
+		   {error, Reason::term()}.
+
+start_link(Port, Options) ->
+    do_start(start_link, Port, Options).
+
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Starts a socket server on port Port with server options 
+%% that are sent to the server when a connection is established,
+%% i.e init is called.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
 -spec start(Port::integer(),
-	   ServerOptions::list({Option::atom(), Value::term()})) ->
+	    ServerOptions::list({Option::atom(), Value::term()})) ->
 		   {ok, ChildPid::pid()} |
 		   {error, Reason::term()}.
 
 start(Port, Options) ->
-    ct:pal("port ~p",[Port]),
-    exo_socket_server:start(Port,[tcp],
-			    [{active,once},{reuseaddr,true},
-			     {verify, verify_none}],
-			    ?MODULE, Options).
+    do_start(start, Port, Options).
 
+do_start(F, Port, Options) ->
+    ct:pal("port ~p",[Port]),
+    exo_socket_server:F(Port,[tcp],
+			[{active,once},{reuseaddr,true},
+			 {verify, verify_none}],
+			?MODULE, Options).
+
+
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Stops the socket server.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
+-spec stop(Pid::pid()) ->
+		   {ok, ChildPid::pid()} |
+		   {error, Reason::term()}.
+stop(Pid) ->
+    exo_socket_server:stop(Pid).
 
 %%-----------------------------------------------------------------------------
 %% @doc
