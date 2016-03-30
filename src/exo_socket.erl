@@ -614,7 +614,10 @@ setopts(#exo_socket { mctl = M, socket = S}, Opts) ->
 getopts(#exo_socket { mctl = M, socket = S}, Opts) ->
     M:getopts(S, Opts).
 
-controlling_process(#exo_socket { mdata = M, socket = S}, NewOwner) ->
+controlling_process(#exo_socket { mdata = M, socket = S, flow = undefined}, NewOwner) ->
+    M:controlling_process(S, NewOwner);
+controlling_process(#exo_socket { mdata = M, socket = S, transport = T}, NewOwner) ->
+    exo_flow:transfer(T, NewOwner),
     M:controlling_process(S, NewOwner).
 
 sockname(#exo_socket { mctl = M, socket = S}) ->
