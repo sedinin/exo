@@ -61,7 +61,9 @@
 %% Configurable start
 -export([start/2,
 	 start_link/2,
-	 response/5, response/6]).
+	 stop/1,
+	 response/5, 
+	 response/6]).
 
 %% For testing
 -export([test/0, test/1]).
@@ -119,6 +121,18 @@ do_start(Start, Port, Options) ->
 				    ?MODULE, ServerOptions);
 	E -> E
     end.
+
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Stops the socket server.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
+-spec stop(Pid::pid()) ->
+		   {ok, ChildPid::pid()} |
+		   {error, Reason::term()}.
+stop(Pid) ->
+    exo_socket_server:stop(Pid).
 
 %%-----------------------------------------------------------------------------
 %% @doc

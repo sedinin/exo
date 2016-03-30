@@ -21,11 +21,16 @@
 %% API
 -export([start_link/5, start_link/6]).
 -export([start/5, start/6]).
+-export([stop/1]).
 -export([reusable_sessions/1]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+-export([init/1, 
+	 handle_call/3, 
+	 handle_cast/2, 
+	 handle_info/2,
+	 terminate/2, 
+	 code_change/3]).
 
 -export([behaviour_info/1]).
 
@@ -109,7 +114,6 @@ behaviour_info(_Other) ->
 %% Starts the server
 %% @end
 %%--------------------------------------------------------------------
-
 start_link(Port, Protos, Options, Module, Args) ->
     gen_server:start_link(?MODULE, [Port,Protos,Options,Module,Args], []).
 
@@ -122,6 +126,19 @@ start(Port, Protos, Options, Module, Args) ->
 start(ServerName, Protos, Port, Options, Module, Args) ->
     gen_server:start(ServerName, ?MODULE, [Port,Protos,Options,Module,Args], []).
 
+%%--------------------------------------------------------------------
+%% @doc
+%% Stops the server identified by pid or servername.
+%% @end
+%%--------------------------------------------------------------------
+-spec stop(Server::atom() | pid()) -> ok | {error, Error::term()}.
+
+stop(Server) when is_atom(Server);
+		  is_pid(Server) ->
+    gen_server:call(Server, stop).
+
+
+%%--------------------------------------------------------------------
 -spec reusable_sessions(Process::pid() | atom()) ->
 	   list({{IpAddress::tuple(), Port::integer}, Pid::pid}).
 
@@ -229,10 +246,12 @@ handle_call(reusable_sessions, _From, #state{socket_reuse = R} = State) ->
 	_ ->
 	    {reply, [], State}
     end;
-handle_call(Request, _From, State) ->
-    lager:debug("~p: handle_call(~p) not implemented!!", [?MODULE, Request]),
-    Reply = ok,
-    {reply, Reply, State}.
+handle_call(stop, _From, State) ->
+    lager:debug("stop", []),
+    {stop, normal, ok, State};
+handle_call(_Request, _From, State) ->
+    lager:debug("unknown request ~p.", [_Request]),
+    {reply, {error, bad_call}, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -245,6 +264,7 @@ handle_call(Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(_Msg, State) ->
+    lager:debug("unknown msg ~p.", [_Msg]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -259,7 +279,7 @@ handle_cast(_Msg, State) ->
 %%--------------------------------------------------------------------
 handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, State) 
   when (State#state.listen)#exo_socket.socket =:= LSocket,
-     Ref =:= State#state.ref ->
+       Ref =:= State#state.ref ->
     lager:debug("<-- ~p~n", [_Msg]),
     Listen = State#state.listen,
     NewAccept = exo_socket:async_accept(Listen),
@@ -283,7 +303,7 @@ handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, State)
 				  error
 			  end
 		  after 3000 ->
-			  lager:warning("parent did not passed over control"),
+			  lager:warning("parent did not pass over control"),
 			  error
 		  end
 	  end),
@@ -362,6 +382,7 @@ handle_info({'DOWN', _, process, Pid, _},
 	    {noreply, State#state{socket_reuse = R1}}
     end;
 handle_info(_Info, State) ->
+    lager:debug("unknown info ~p.", [_Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
