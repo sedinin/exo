@@ -53,6 +53,7 @@ listen(Port, Opts) ->
 
 listen(Port, Protos=[tcp|_], Opts0) 
   when is_integer(Port) -> %% tcp socket
+    lager:debug("options=~w\n", [Opts0]),
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
     {TcpOpts, Opts2} = split_options(tcp_listen_options(), Opts1),
@@ -578,7 +579,9 @@ send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
 		_E ->
 		    lager:debug("fill_time error ~p", [_E])
 	    end,
-	    send(X, Data)
+	    send(X, Data);
+	_E ->
+	    lager:debug("use error ~p", [_E])
     end.
 	    
 send1(#exo_socket { mdata = M, socket = S, mauth = undefined}, Data) ->
