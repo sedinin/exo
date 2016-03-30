@@ -351,6 +351,7 @@ handle_module_result({close, CSt1}, State) ->
     exo_socket:shutdown(State#state.socket, write),
     ret({noreply, State#state { state = CSt1 }});
 handle_module_result({stop,Reason,CSt1}, State) ->
+    %% shutdown here ???
     {stop, Reason, State#state { state = CSt1 }};
 handle_module_result({reply, Rep, CSt1}, State) ->
     TRef = handle_active(State),
@@ -373,7 +374,7 @@ send_next([], _) ->
 handle_active(State=#state {socket = S, active = Active}) ->
     WaitTime = case maybe_flow_control(S, fill_time, 1) of
 		   ok -> 0;
-		   {ok, Time} ->  trunc(Time) * 1000;
+		   {ok, Time} ->  trunc(Time * 1000);
 		   {error, _E} -> 0
 	       end,
     lager:debug("{active, time} = ~p",[ {Active, WaitTime} ]),
@@ -399,7 +400,7 @@ handle_active(State=#state {socket = S, active = Active}) ->
 	    undefined;
 	{N, T} when is_number(N), is_number(T) ->
 	    exo_socket:setopts(State#state.socket, [{active,false}]),
-	    erlang:start_timer(T, self(), {active, T}); %% ???
+	    erlang:start_timer(T, self(), {active, N}); %% ???
 	_Other ->
 	    %% What is this??
 	    lager:error("Unexpected {active, time} = ~p",[ _Other]),
