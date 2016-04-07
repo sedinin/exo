@@ -330,7 +330,7 @@ handle_reuse_data(Rest, #state{module = M, state = MSt} = State) ->
     State1 = State#state{state = MSt1},
     {ok, {Host,_}} = exo_socket:peername(State1#state.socket),
     get_parent(State1) ! {self(), reuse, [{host, Host}|Config]},
-    if State1#state.active == once ->
+    if State1#state.active =:= once ->
 	    exo_socket:setopts(State#state.socket, [{active,once}]);
        true ->
 	    ok

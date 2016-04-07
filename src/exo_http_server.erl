@@ -61,9 +61,10 @@
 %% Configurable start
 -export([start/2,
 	 start_link/2,
-	 stop/1,
-	 response/5, 
+	 stop/1]).
+-export([response/5,
 	 response/6]).
+-export([response_r/6]).  %% use this one
 
 %% For testing
 -export([test/0, test/1]).
@@ -247,12 +248,18 @@ handle_request(Socket, R, State) ->
 		ok ->
 		    handle_body(Socket, R, Body, State);
 		{required,AuthenticateValue,State} ->
-		    response(Socket,undefined, 401, "Unauthorized", "",
-			     [{'WWW-Authenticate', AuthenticateValue}]),
-		    {ok,State};
+		    V = response_r(Socket,R,401,"Unauthorized", "",
+				   [{'WWW-Authenticate', AuthenticateValue}]),
+		    case V of
+			ok -> {ok,State};
+			stop -> {stop, normal, State}
+		    end;
 		{error, unauthorised} ->
-		    response(Socket,undefined, 401, "Unauthorized", "", []),
-		    {ok,State}
+		    V = response_r(Socket,R,401,"Unauthorized","",[]),
+		    case V of
+			ok -> {ok,State};
+			stop -> {stop, normal, State}
+		    end
 	    end;
 
 	{error, closed} ->
@@ -483,7 +490,7 @@ handle_body(Socket, Request, Body, State) ->
     RH = State#state.request_handler,
     {M, F, As} = request_handler(RH,Socket, Request, Body),
     lager:debug("exo_http_server: calling ~p with -BODY:\n~s\n-END-BODY\n",
-	   [RH, Body]),
+		[RH, Body]),
     case apply(M, F, As) of
 	ok -> {ok, State};
 	stop -> {stop, normal, State};
@@ -507,12 +514,10 @@ request_handler({Module, Function, XArgs}, Socket, Request, Body) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec response(Socket::#exo_socket{},
-	      Connection::string() | undefined,
-	      Status::integer(),
-	      Phrase::string(),
-	      Body::string()) ->
-				ok |
-				{error, Reason::term()}.
+	       Connection::string() | undefined,
+	       Status::integer(),
+	       Phrase::string(),
+	       Body::string()) -> ok | {error, Reason::term()}.
 
 response(S, Connection, Status, Phrase, Body) ->
     response(S, Connection, Status, Phrase, Body, []).
@@ -524,25 +529,96 @@ response(S, Connection, Status, Phrase, Body) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec response(Socket::#exo_socket{},
-	      Connection::string() | undefined,
-	      Status::integer(),
-	      Phrase::string(),
-	      Body::string(),
-	      Opts::list()) ->
-				ok |
-				{error, Reason::term()}.
+	       Connection::string() | undefined,
+	       Status::integer(),
+	       Phrase::string(),
+	       Body::string(),
+	       Opts::list()) -> ok | {error, Reason::term()}.
+
 response(S, Connection, Status, Phrase, Body, Opts) ->
-    {Content_type, Opts1} = opt_take(content_type, Opts, "text/plain"),
+    {Version, Opts0} = opt_take(version, Opts, {1,1}),
+    {Content_type, Opts1} = opt_take(content_type, Opts0, "text/plain"),
     {Set_cookie, Opts2} = opt_take(set_cookie, Opts1, undefined),
-    {Transfer_encoding,Opts3} = opt_take(transfer_encoding, Opts2, undefined),
+    {Transfer_encoding,Opts3} =
+	if Version > {1,0} ->
+		opt_take(transfer_encoding, Opts2, undefined);
+	   true ->
+		{_,Opts3_1} = opt_take(transfer_encoding, Opts2, undefined),
+		{undefined, Opts3_1}
+	end,
     {Location,Opts4} = opt_take(location, Opts3, undefined),
-    {Version, Opts5} = opt_take(version, Opts4, {1,1}),
-    ContentLength = if Transfer_encoding =:= "chunked", Body == "" ->
+    ContentLength = if Transfer_encoding =:= "chunked", Body =:= "" ->
 			    undefined;
 		       true ->
 			    content_length(Body)
 		    end,
-    H = #http_shdr { connection = Connection,
+    Connection1 = if Version =:= {1,0}, Connection =/= "keep-alive" ->
+			  "close";
+		     Version > {1,0}, Connection =:= "close" ->
+			  "close";
+		     true ->
+			  Connection
+		  end,
+
+    H = #http_shdr { connection = Connection1,
+		     content_length = ContentLength,
+		     content_type = Content_type,
+		     set_cookie = Set_cookie,
+		     transfer_encoding = Transfer_encoding,
+		     location = Location,
+		     other = Opts4 },
+
+    R = #http_response { version = Version,
+			 status = Status,
+			 phrase = Phrase,
+			 headers = H },
+    Response = [exo_http:format_response(R),
+		?CRNL,
+		exo_http:format_hdr(H),
+		?CRNL,
+		Body],
+    lager:debug("exo_http_server: response:\n~s\n", [Response]),
+    exo_socket:send(S, Response),
+    if Connection1 =:= "close" ->
+	    stop;
+       true ->
+	    ok
+    end.
+
+%% replace the above with this code instead
+%% response version is 1.1
+-define(SERVER_HTTP_VSN, {1,1}).
+
+response_r(S, Request, Status, Phrase, Body, Opts) ->
+    {Version, Opts0} = opt_take(version, Opts, ?SERVER_HTTP_VSN),
+    {Content_type, Opts1} = opt_take(content_type, Opts0, "text/plain"),
+    {Set_cookie, Opts2} = opt_take(set_cookie, Opts1, undefined),
+    {Transfer_encoding,Opts3} =
+	if Request#http_request.version > {1,0} ->
+		opt_take(transfer_encoding, Opts2, undefined);
+	   true ->
+		{_,Opts3_1} = opt_take(transfer_encoding, Opts2, undefined),
+		{undefined, Opts3_1}
+	end,
+    {Location,Opts4} = opt_take(location, Opts3, undefined),
+    CH = Request#http_request.headers,
+    {Connection0,Opts5} = opt_take(connection, Opts4, CH#http_chdr.connection),
+    Connection = if Connection0 =:= undefined -> undefined;
+		    is_list(Connection0) -> string:to_lower(Connection0)
+		 end,
+    ContentLength = if Transfer_encoding =:= "chunked", Body =:= "" ->
+			    undefined;
+		       true ->
+			    content_length(Body)
+		    end,
+    Connection1 = if Request#http_request.version =:= {1,0},
+		     Connection =/= "keep-alive" ->
+			  "close";
+		     true ->
+			  Connection
+		  end,
+
+    H = #http_shdr { connection = Connection1,
 		     content_length = ContentLength,
 		     content_type = Content_type,
 		     set_cookie = Set_cookie,
@@ -560,7 +636,12 @@ response(S, Connection, Status, Phrase, Body, Opts) ->
 		?CRNL,
 		Body],
     lager:debug("exo_http_server: response:\n~s\n", [Response]),
-    exo_socket:send(S, Response).
+    exo_socket:send(S, Response),
+    if Connection1 =:= "close" ->
+	    stop;
+       true ->
+	    ok
+    end.
 
 content_length(B) when is_binary(B) ->
     byte_size(B);
@@ -594,15 +675,16 @@ handle_http_request(Socket, Request, Body) ->
     lager:debug("exo_http_server: -BODY:\n~s\n-END-BODY\n", [Body]),
     if Request#http_request.method =:= 'GET',
        Url#url.path =:= "/quit" ->
-	    response(Socket, "close", 200, "OK", "QUIT"),
+	    response_r(Socket, Request, 200, "OK", "QUIT",
+		       [{connection,"close"}]),
 	    exo_socket:shutdown(Socket, write),
 	    stop;
        Url#url.path =:= "/test" ->
-	    response(Socket, undefined, 200, "OK", "OK"),
+	    response_r(Socket, Request, 200, "OK", "OK", []),
 	    ok;
        true ->
-	    response(Socket, undefined, 404, "Not Found",
-		     "Object not found"),
+	    response_r(Socket, Request, 404, "Not Found",
+		       "Object not found", []),
 	    ok
     end.
 
