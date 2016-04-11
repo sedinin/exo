@@ -426,7 +426,7 @@ handle_cast(_Msg, Ctx) ->
 
 handle_info({'DOWN',Ref,process,_Pid,_Reason} = _I, Ctx=#ctx {owners = Owners}) ->
    lager:debug("info ~p", [_I]),
-    case ets:take(Owners, Ref) of
+    case ets_take(Owners, Ref) of
 	[{Ref, Key}] ->
 	    erlang:demonitor(Ref, [flush]),
 	    ets:delete(?BUCKETS, {in, Key}),
@@ -577,7 +577,7 @@ add_owner(Pid, Key, Owners) ->
     ets:insert(Owners, {Ref, Key}). %% For crash
  
 remove_owner(Key, Owners) ->
-    case ets:take(Owners, Key) of
+    case ets_take(Owners, Key) of
 	[{Key, Ref}] ->
 	    erlang:demonitor(Ref, [flush]),
 	    ets:delete(Owners, Ref);
@@ -600,4 +600,16 @@ erlang_system_time_us() ->
 	error:undef ->
 	    {MS,S,US} = os:timestamp(),
 	    (MS*1000000+S)*1000000+US
+    end.
+
+ets_take(Tab,Key) ->
+    try ets:take(Tab, Key)
+    catch
+	error:undef ->
+	    case ets:lookup(Tab,Key) of
+		[] -> [];
+		Objects ->
+		    ets:delete(Tab, Key),
+		    Objects
+	    end
     end.
