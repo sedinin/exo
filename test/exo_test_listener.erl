@@ -117,6 +117,9 @@ init(Socket, Options) ->
     RH = proplists:get_value(request_handler, Options, ?MODULE),
     Packet = proplists:get_value(packet, Options, 0),
     exo_socket:setopts(Socket, [{packet, Packet}]),
+    %%ale:debug_gl(exo_flow),
+    %%ale:debug_gl(exo_socket),
+    %%ale:debug_gl(exo_socket_session),
     {ok, #state{request_handler = RH}}.
 
 %% To avoid a compiler warning. 
@@ -146,7 +149,6 @@ control(_Socket, _Request, _From, State) ->
 		  {stop, {error, Reason::term()}, NewState::#state{}}.
 
 data(Socket, Data, State=#state {request_handler = RH}) ->
-    ct:pal("~p: data = ~p\n", [self(), Data]),
     case Data of
 	_ when is_list(Data); is_binary(Data) ->
 	    handle_data(RH, Socket, Data, State);

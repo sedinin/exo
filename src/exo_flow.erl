@@ -267,7 +267,7 @@ wait({Direction, _K} = Key, Tokens)
     case is_up() of
 	true ->
 	    case ets:lookup(?BUCKETS, Key) of
-		[{Key, B}] when is_record(B, bucket) ->
+		[B] when is_record(B, bucket) ->
 		    bucket_wait(B, Tokens);
 		[] ->
 		    {error, unknown_key}
@@ -294,7 +294,7 @@ fill_wait({Direction, _K} = Key, Tokens)
     case is_up() of
 	true ->
 	    case ets:lookup(?BUCKETS, Key) of
-		[{Key,B}] when is_record(B, bucket) ->
+		[B] when is_record(B, bucket) ->
 		    bucket_wait(B, Tokens),
 		    fill_bucket(B);
 		[] ->
@@ -525,7 +525,7 @@ use_tokens({out, _K} = Key, Tokens) ->
 			       [{#bucket.current, Current - Tokens}]),
 	    ok;
 	[_B=#bucket {action = Action}] ->
-	    lager:debug("bucket ~p full, ~p.", [Key, Action]),
+	    lager:debug("not enough tokens in bucket ~p, ~p.", [Key, Action]),
 	    {action, Action};
 	[] ->
 	    {error, unknown_key}
@@ -535,17 +535,17 @@ fill_bucket(B) when is_record(B, bucket) ->
     Now = erlang_system_time_us(),
     Current = B#bucket.current,
     Capacity = B#bucket.capacity,
-    T = if Current < Capacity ->
-		Dt = time_delta(Now, B#bucket.timestamp),
-		New = B#bucket.rate * Dt,
-		lager:debug("bucket ~p tokens to fill ~p.", 
-			    [B#bucket.key, New]),
+    Tokens = if Current < Capacity ->
+		     Dt = time_delta(Now, B#bucket.timestamp),
+		     New = B#bucket.rate * Dt,
+		     lager:debug("bucket ~p tokens to fill ~p", 
+				 [B#bucket.key, New]),
 		erlang:min(Capacity, Current + New);
 	   true ->
 		Current
 	end,
-    ets:insert(?BUCKETS, B#bucket {current = T, timestamp = Now}),
-    {ok, T}.
+    ets:insert(?BUCKETS, B#bucket {current = Tokens, timestamp = Now}),
+    {ok, Tokens}.
     
 bucket_fill_time(B, Tokens) when is_record(B, bucket) ->
     Current = B#bucket.current,
@@ -554,8 +554,8 @@ bucket_fill_time(B, Tokens) when is_record(B, bucket) ->
        true ->
 	    Ts = Tokens - Current,  %% tokens to wait for
 	    Sec = Ts / B#bucket.rate, %% seconds to wait
-	    lager:debug("bucket ~p seconds to wait for ~p.", 
-			[B#bucket.key, Sec]),
+	    lager:debug("bucket ~p tokens to wait for ~p.", [B#bucket.key, Ts]),
+	    lager:debug("bucket ~p time to wait ~p.", [B#bucket.key, Sec]),
 	    {ok, Sec}
     end.
 
@@ -563,6 +563,7 @@ bucket_wait(B, Tokens)  when is_record(B, bucket) ->
     {ok, Ts} = bucket_fill_time(B, Tokens),
     Tms = Ts*1000,
     Delay = trunc(Tms),
+    lager:debug("bucket ~p sleeping ~p ms.", [B#bucket.key, Delay]),
     if Delay < Tms ->
 	    timer:sleep(Delay+1);
        Delay > 0 ->

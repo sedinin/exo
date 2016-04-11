@@ -563,25 +563,21 @@ send(#exo_socket {flow = undefined} = X, Data) ->
     send1(X, Data);
 send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
     lager:debug("socket ~p", [S]),
-    exo_flow:fill({out,T}),
+    {ok, Tokens} = exo_flow:fill({out,T}),
+    lager:debug("tokens in bucket ~p", [Tokens]),
     case exo_flow:use({out,T}, 1) of
 	ok -> 
 	    send1(X, Data);
-	{action, throw} -> 
+	{action, throw} ->
 	    lager:warning("Message thrown due to overload protection"),
 	    ok;
 	{action, wait} ->
-	    case exo_flow:fill_time({out, T}, 1) of
-		{ok, WaitTime} when WaitTime > 0 ->
-		    Timeout = trunc(WaitTime * 1000),
-		    lager:warning("Message delayed ~w ms due to overload protection", [Timeout]),
-		    timer:sleep(Timeout);
-		_E ->
-		    lager:debug("fill_time error ~p", [_E])
-	    end,
+	    lager:warning("Message delayed due to overload protection", []),
+	    exo_flow:wait({out, T}, 1),
 	    send(X, Data);
-	_E ->
-	    lager:debug("use error ~p", [_E])
+	{error, _E} = E->
+	    lager:debug("use error ~p", [_E]),
+	    E
     end.
 	    
 send1(#exo_socket { mdata = M, socket = S, mauth = undefined}, Data) ->
