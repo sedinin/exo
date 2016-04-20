@@ -405,12 +405,7 @@ accept(X) when is_record(X, exo_socket) ->
 accept(X, Timeout) when 
       is_record(X, exo_socket), 
       (Timeout =:= infnity orelse (is_integer(Timeout) andalso Timeout >= 0)) ->
-    case accept_upgrade(X, X#exo_socket.protocol, Timeout) of
-	{error,_X,Reason} ->
-	    {error, Reason};
-	{ok,X} ->
-	    {ok,X}
-    end.
+    accept_upgrade(X, X#exo_socket.protocol, Timeout).
 
 accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
     lager:debug("accept protos=~w\n", [Protos0]),
