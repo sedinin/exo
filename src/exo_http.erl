@@ -70,6 +70,7 @@
 	]).
 -export([url_decode/1,
 	 parse_query/1]).
+-export([parse_alt_query/1, parse_alt_seq/1, parse_kv/1]).
 -export([make_digest_response/3]).
 
 
@@ -890,18 +891,61 @@ format_query([]) ->
     [].
 
 parse_query(Cs) ->
-   [case string:tokens(Kv,"=") of
-	[Key0,Value0] ->
-	    Key1 = url_decode(Key0),
-	    Value1 = url_decode(Value0),
-	    try list_to_integer(trim(Value1)) of
-		Value -> {Key1, Value}
-	    catch
-		error:_ -> {Key1, Value1}
-	    end;
-	[Key0] ->
-	    {url_decode(Key0),true}
-    end || Kv <- string:tokens(Cs, "&")].
+    parse_seq(Cs).
+
+parse_seq(Cs) ->
+    [case string:tokens(Kv,"=") of
+	 [Key0,Value0] ->
+	     Key1 = url_decode(Key0),
+	     Value1 = url_decode(Value0),
+	     try list_to_integer(trim(Value1)) of
+		 Value -> {Key1, Value}
+	     catch
+		 error:_ -> {Key1, Value1}
+	     end;
+	 [Key0] ->
+	     {url_decode(Key0),true}
+     end || Kv <- string:tokens(Cs, "&")].
+
+%% query with alternative forms 
+%% k1=v1&k2=v2;k1=v3;k3=v2  == ((k1=v1) AND (k2=v2)) OR (k1=v3) OR (k3=v2)
+parse_alt_query(Cs) ->
+    case string:tokens(Cs,";") of  %% run disjunction
+	[] ->
+	    {all,[]};
+	[Q] ->
+	    {all,parse_alt_seq(Q)};
+	Qs ->
+	    {any,[{all,parse_alt_seq(Q)} || Q <- Qs]}
+    end.
+
+%% allow k<v,k<=v,k=v,k>v,k>=,k<>v (with or without url encoding)
+parse_alt_seq(Cs) ->
+    [parse_kv(Kv) || Kv <- string:tokens(Cs, "&")].
+
+parse_kv(Cs) ->
+    parse_kv(Cs,[]).
+
+parse_kv([$<,$=|Cs], Ks)   -> {'<=', make_rkey(Ks), make_val(Cs)};
+parse_kv([$<,$>|Cs], Ks)   -> {'<>', make_rkey(Ks), make_val(Cs)};
+parse_kv([$<,$%,C1,C2|Cs], Ks) ->
+    parse_kv([$<,list_to_integer([C1,C2], 16)|Cs],Ks);
+parse_kv([$<|Cs], Ks)      -> {'<', make_rkey(Ks), make_val(Cs)};
+parse_kv([$>,$=|Cs], Ks)   -> {'>=', make_rkey(Ks), make_val(Cs)};
+parse_kv([$>,$%,C1,C2|Cs], Ks) ->
+    parse_kv([$>,list_to_integer([C1,C2], 16)|Cs], Ks);
+parse_kv([$>|Cs], Ks)      -> {'>', make_rkey(Ks), make_val(Cs)};
+parse_kv([$=|Cs], Ks)      -> {'=', make_rkey(Ks), make_val(Cs)};
+parse_kv([$%,C1,C2|Cs],Ks) -> parse_kv([list_to_integer([C1,C2], 16)|Cs], Ks);
+parse_kv([$+|Cs],Ks) -> parse_kv([$\s|Cs], Ks);
+parse_kv([C|Cs],Ks) -> parse_kv(Cs,[C|Ks]);
+parse_kv([],Ks) -> {'=',make_rkey(Ks),["true"]}.
+
+make_rkey(Ks) ->
+    list_to_atom(lists:reverse(Ks)).
+
+make_val(Cs) ->
+    [trim(P) || P <- string:tokens(url_decode(Cs),",")].
 
 %% scan (comma) separated value  "*", "abcd" [, "fghi"]*
 %% FIXME , must be able to handle empty values
@@ -979,13 +1023,18 @@ to_value(Int) when is_integer(Int) -> integer_to_list(Int).
 %% Url encode a string
 %%
 url_encode([C|T]) ->
-    if C >= $a, C =< $z ->  [C|url_encode(T)];
-       C >= $A, C =< $Z ->  [C|url_encode(T)];
-       C >= $0, C =< $9 ->  [C|url_encode(T)];
-       C =:= $\s         ->  [$+|url_encode(T)];
-       C =:= $_; C =:= $.; C =:= $-; C =:= $/; C =:= $: -> % FIXME: more..
-	    [C|url_encode(T)];       
-       true ->
+    if C >= $a, C =< $z ->  [C|url_encode(T)];   %% unreserved
+       C >= $A, C =< $Z ->  [C|url_encode(T)];   %% unreserved
+       C >= $0, C =< $9 ->  [C|url_encode(T)];   %% unreserved
+       C =:= $\s        ->  [$+|url_encode(T)];
+       C =:= $-; C =:= $.; C =:= $_; C =:= $~ -> %% unreserved
+	    [C|url_encode(T)];
+       C =:= $!; C =:= $$; C =:= $&; C =:= $'; C =:= $(; C =:= $);
+       C =:= $*; C =:= $+; C =:= $,; C =:= $;; C =:= $= ->  %% sub-delims
+	    [C|url_encode(T)];
+       C =:= $:; C =:= $@ ->  %% pchar
+	    [C|url_encode(T)];
+       true ->  %% pct-encoded
 	    case erlang:integer_to_list(C, 16) of
 		[C1]   -> [$%,$0,C1 | url_encode(T)];
 		[C1,C2] ->[$%,C1,C2 | url_encode(T)]
