@@ -106,8 +106,10 @@ start_link(Port, Options) ->
 do_start(Start, Port, Options) ->
     lager:debug("exo_http_server: ~w: port ~p, server options ~p",
 	   [Start, Port, Options]),
-    {ServerOptions,Options1} = opts_take([request_handler,access,private_key],
-					 Options),
+    {SessionOptions,Options1} = opts_take([request_handler,
+					   access,
+					   private_key],
+					  Options),
     Dir = code:priv_dir(exo),
     Access = proplists:get_value(access, Options, []),
     case validate_auth(Access) of
@@ -119,7 +121,7 @@ do_start(Start, Port, Options) ->
 				     {keyfile, filename:join(Dir, "host.key")},
 				     {certfile, filename:join(Dir, "host.cert")}
 				     | Options1],
-				    ?MODULE, ServerOptions);
+				    ?MODULE, SessionOptions);
 	E -> E
     end.
 
@@ -152,10 +154,9 @@ init(Socket, Options) ->
     lager:debug("exo_http_server: connection from peer: ~p, sockname: ~p,\n"
 		"options ~p", [_PeerName, _SockName, Options]),
     Access = proplists:get_value(access, Options, []),
-    Module = proplists:get_value(request_handler, Options, undefined),
+    RH = proplists:get_value(request_handler, Options, undefined),
     PrivateKey = proplists:get_value(private_key, Options, ""),
-    {ok, #state{access = Access, private_key=PrivateKey,
-		request_handler = Module}}.
+    {ok, #state{access = Access, private_key=PrivateKey, request_handler = RH}}.
 
 %% To avoid a compiler warning. Should we actually support something here?
 %%-----------------------------------------------------------------------------
@@ -488,13 +489,18 @@ unq_([]) -> [].
 
 handle_body(Socket, Request, Body, State) ->
     RH = State#state.request_handler,
-    {M, F, As} = request_handler(RH,Socket, Request, Body),
-    lager:debug("exo_http_server: calling ~p with -BODY:\n~s\n-END-BODY\n",
+    lager:debug("calling ~p with -BODY:\n~s\n-END-BODY\n",
 		[RH, Body]),
-    case apply(M, F, As) of
+    {M, F, As} = request_handler(RH, Socket, Request, Body),
+    lager:debug("args converted to ~p", [As]),
+    try apply(M, F, As) of
 	ok -> {ok, State};
 	stop -> {stop, normal, State};
 	{error, Error} ->  {stop, Error, State}
+    catch _:_E ->
+	    lager:error("call to request_handler ~p failed, reason ~p",
+			[RH, _E]),
+	    {stop, internal_error, State}
     end.
 
 %% @private
@@ -505,7 +511,7 @@ request_handler(Module, Socket, Request, Body) when is_atom(Module) ->
 request_handler({Module, Function}, Socket, Request, Body) ->
     {Module, Function, [Socket, Request, Body]};
 request_handler({Module, Function, XArgs}, Socket, Request, Body) ->
-    {Module, Function, [Socket, Request, Body | XArgs]}.
+    {Module, Function, [Socket, Request, Body, XArgs]}.
 
 %%-----------------------------------------------------------------------------
 %% @doc

@@ -114,17 +114,27 @@ behaviour_info(_Other) ->
 %% Starts the server
 %% @end
 %%--------------------------------------------------------------------
-start_link(Port, Protos, Options, Module, Args) ->
-    gen_server:start_link(?MODULE, [Port,Protos,Options,Module,Args], []).
+start_link(Port, Protos, Options, Module, SessionOptions) ->
+    gen_server:start_link(?MODULE, 
+			  [Port,Protos,Options,Module,SessionOptions],
+			  []).
 
-start_link(ServerName, Protos, Port, Options, Module, Args) ->
-    gen_server:start_link(ServerName, ?MODULE, [Port,Protos,Options,Module,Args], []).
+start_link(ServerName, Protos, Port, Options, Module, SessionOptions) ->
+    gen_server:start_link(ServerName, 
+			  ?MODULE, 
+			  [Port,Protos,Options,Module,SessionOptions], 
+			  []).
 
-start(Port, Protos, Options, Module, Args) ->
-    gen_server:start(?MODULE, [Port,Protos,Options,Module,Args], []).
+start(Port, Protos, Options, Module, SessionOptions) ->
+    gen_server:start(?MODULE, 
+		     [Port,Protos,Options,Module,SessionOptions], 
+		     []).
 
-start(ServerName, Protos, Port, Options, Module, Args) ->
-    gen_server:start(ServerName, ?MODULE, [Port,Protos,Options,Module,Args], []).
+start(ServerName, Protos, Port, Options, Module, SessionOptions) ->
+    gen_server:start(ServerName, 
+		     ?MODULE, 
+		     [Port,Protos,Options,Module,SessionOptions], 
+		     []).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -160,7 +170,7 @@ reusable_sessions(P) ->
 %%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([Port,Protos,Options,Module,Args] = _X) ->
+init([Port,Protos,Options,Module,SessionOptions] = _X) ->
     lager:debug("~p: init(~p)~n", [?MODULE, _X]),
     Active = proplists:get_value(active, Options, true),
     ReuseMode = proplists:get_value(reuse_mode, Options, none),
@@ -168,7 +178,7 @@ init([Port,Protos,Options,Module,Args] = _X) ->
     Reuse = case ReuseMode of
 		none -> none;
 		_ when ReuseMode =:=client; ReuseMode =:= server ->
-		    {ok, RUSt} = Module:reuse_init(ReuseMode, Args),
+		    {ok, RUSt} = Module:reuse_init(ReuseMode, SessionOptions),
 		    #reuse{mode = ReuseMode,
 			   port = Port,
 			   state = RUSt}
@@ -182,7 +192,7 @@ init([Port,Protos,Options,Module,Args] = _X) ->
 				 socket_reuse = Reuse,
 				 ref=Ref,
 				 module=Module, 
-				 args=Args
+				 args=SessionOptions
 			       }};
 		{error, Reason} ->
 		    {stop,Reason}		    
@@ -289,16 +299,19 @@ handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, State)
 	  fun() ->
 		  receive
 		      controlling ->  %% control sync
-			  case exo_socket:async_socket(Listen, Socket, [delay_auth], 
+			  case exo_socket:async_socket(Listen, Socket, 
+						       [delay_auth], 
 						       ?EXO_DEFAULT_ACCEPT_TIMEOUT) of
 			      {ok, XSocket} ->
-				  {ok,XSt0} = exo_socket_session:init([XSocket,
-								      State#state.module,
-								      State#state.args]),
+				  {ok,XSt0} = 
+				      exo_socket_session:init([XSocket,
+							       State#state.module,
+							       State#state.args]),
 				  {noreply, XSt1} =
 				      exo_socket_session:handle_cast(
 					{activate, State#state.active}, XSt0),
-				  gen_server:enter_loop(exo_socket_session, [], XSt1);
+				  gen_server:enter_loop(exo_socket_session, 
+							[], XSt1);
 			      _Error ->
 				  error
 			  end
