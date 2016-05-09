@@ -106,7 +106,8 @@ listen(File, Protos=[tcp|_], Opts0)
 			       packet   = Packet,
 			       flow     = Flow,
 			       opts     = Opts2,
-			       tags     = {tcp,tcp_closed,tcp_error}
+			       tags     = {tcp,tcp_closed,tcp_error},
+			       sockname  = File
 			     }};
 	Error ->
 	    Error
@@ -425,6 +426,7 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    lager:debug("SSL upgrade, options = ~w\n", [SSLOpts]),
 	    lager:debug("before ssl_accept opt=~w\n", 
 		 [getopts(X, [active,packet,mode])]),
+
 	    if X#exo_socket.mctl =:= afunix ->
 		    afunix:setsockname(X#exo_socket.socket, {{127,0,0,1},1234}),
 		    afunix:setpeername(X#exo_socket.socket, {{127,0,0,1},1235}),
@@ -614,8 +616,9 @@ controlling_process(#exo_socket { mdata = M, socket = S, transport = T}, NewOwne
     exo_flow:transfer(T, NewOwner),
     M:controlling_process(S, NewOwner).
 
-sockname(#exo_socket { mctl = M, socket = S}) ->
-    M:sockname(S).
+sockname(#exo_socket { mctl = M, socket = S, sockname = undefined}) ->
+    M:sockname(S);
+sockname(#exo_socket { sockname = Name}) -> {ok, Name}.
 
 peername(#exo_socket { mctl = M, socket = S}) ->
     M:peername(S).

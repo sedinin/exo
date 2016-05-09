@@ -497,7 +497,7 @@ handle_body(Socket, Request, Body, State) ->
 	ok -> {ok, State};
 	stop -> {stop, normal, State};
 	{error, Error} ->  {stop, Error, State}
-    catch _:_E ->
+    catch error:_E ->
 	    lager:error("call to request_handler ~p failed, reason ~p",
 			[RH, _E]),
 	    {stop, internal_error, State}

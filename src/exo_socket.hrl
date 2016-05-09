@@ -32,7 +32,8 @@
 	  tags = {data,close,error},  %% data tags used
 	  flow = undefined, %% Flow control policy, if any
 	  mauth,        %% user-provided auth module - if any
-	  auth_state    %% state for user-provided auth module.
+	  auth_state,   %% state for user-provided auth module.
+	  sockname      %% original sockname
 	}).
 
 -endif.
