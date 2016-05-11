@@ -64,9 +64,9 @@
 
 -record(mqtt_header,
 	{type = ?MQTT_RESERVED ::mqtt_packet_type(),
-	 duplicate = false ::boolean(),
+	 duplicate = 0 ::0 | 1,
 	 qos = 0 ::integer(),
-	 retain = false ::boolean(),
+	 retain = 0 ::0 | 1,
 	 length = 0::integer()}).
 
 -record(mqtt_packet,

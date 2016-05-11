@@ -37,11 +37,9 @@ make_packet(Header=#mqtt_header{type = Type}, Data, PayLoad) ->
 pack(#mqtt_header{type = Type, duplicate = Duplicate, 
 		  qos = QoS, retain = Retain},
      DataBin, PayLoadBin) when is_binary(DataBin), is_binary(PayLoadBin) ->
-    lager:debug("data ~p",[DataBin]),
-    lager:debug("payload ~p",[PayLoadBin]),
+    lager:debug("pack ~p",[Type]),
     Length = size(DataBin) + size(PayLoadBin),
     LengthBin = pack_length(Length),
-    lager:debug("length ~p",[LengthBin]),
     <<Type:4,Duplicate:1,QoS:2,Retain:1,
       LengthBin/binary,
       DataBin/binary,
@@ -91,14 +89,20 @@ parse_topics(?MQTT_UNSUBSCRIBE = Sub, Bin, Topics) ->
 			 {String::binary(), Rest::binary()}.
 
 parse_field(<<Length:16/big, Field:Length/binary, Rest/binary>>) ->
-    lager:debug("field ~p",[Field]),
+    lager:debug("parse field ~p",[Field]),
     {Field, Rest};
 parse_field(Bin) ->
     lager:warning("parse failed"),
     {<<>>, Bin}.
 
-pack_field(String) ->
+pack_field(String) when is_list(String) ->
+    lager:debug("pack field ~p",[Field]),
     StringBin = unicode:characters_to_binary(String),
     Len = size(StringBin),
     true = (Len =< 16#ffff),
-    <<Len:16/big, StringBin/binary>>.
+    <<Len:16/big, StringBin/binary>>;
+pack_field(Bin) when is_binary(Bin) ->
+    Len = size(Bin),
+    true = (Len =< 16#ffff),
+    <<Len:16/big, Bin/binary>>.
+
