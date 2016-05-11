@@ -293,21 +293,28 @@ handle_message(Socket, Header=#mqtt_header{type = ?MQTT_SUBSCRIBE},
 to_handler(Socket, Topic, State=#state {mqtt_handler = MH}) ->
     %% Send to handler
     {M, F, As} = mqtt_handler(MH, [Socket, Topic]),
-    lager:debug("args converted to ~p", [As]),
     try apply(M, F, As) of
-	ok -> {ok, State};
-	{ok, Reply} -> publish(Socket, Topic, Reply), {ok, State};
-	stop -> {stop, normal, State};
-	{error, Error} ->  {stop, Error, State}
+	ok -> 
+	    {ok, State};
+	{ok, Reply} -> 
+	    lager:debug("reply ~p", [Reply]),
+	    publish(Socket, Topic, Reply), 
+	    {ok, State};
+	stop -> 
+	    {stop, normal, State};
+	{error, Error} ->  
+	    lager:error("call to mqtt_handler ~p returned ~p",[MH, Error]),
+	    {ok, State}
     catch error:_E ->
 	    lager:error("call to mqtt_handler ~p failed, reason ~p, stack ~p",
 			[MH, _E, erlang:get_stacktrace()]),
-	    {stop, internal_error, State}
+	    {ok, State}
     end.
  
-publish(Socket, Topic, Data) ->
+publish(Socket, Topic, Msg) ->
+    lager:debug("topic ~p, message ~p", [Topic, Msg]),
     Publish = exo_mqtt:make_packet(#mqtt_header{type = ?MQTT_PUBLISH},
-				   Topic, Data),
+				   Topic, Msg),
     exo_socket:send(Socket, Publish),
     ok.
 

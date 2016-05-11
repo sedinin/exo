@@ -36,9 +36,12 @@ make_packet(Header=#mqtt_header{type = Type}, Data, PayLoad) ->
 
 pack(#mqtt_header{type = Type, duplicate = Duplicate, 
 		  qos = QoS, retain = Retain},
-     DataBin, PayLoadBin) ->
+     DataBin, PayLoadBin) when is_binary(DataBin), is_binary(PayLoadBin) ->
+    lager:debug("data ~p",[DataBin]),
+    lager:debug("payload ~p",[PayLoadBin]),
     Length = size(DataBin) + size(PayLoadBin),
     LengthBin = pack_length(Length),
+    lager:debug("length ~p",[LengthBin]),
     <<Type:4,Duplicate:1,QoS:2,Retain:1,
       LengthBin/binary,
       DataBin/binary,
