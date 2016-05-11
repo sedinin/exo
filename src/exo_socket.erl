@@ -1,18 +1,29 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT -------------------------------------------------------
 %%%
-%%% Copyright (C) 2012-2016 Feuerlabs, Inc. All rights reserved.
+%%% Copyright (C) 2016, Rogvall Invest AB, <tony@rogvall.se>
 %%%
-%%% This Source Code Form is subject to the terms of the Mozilla Public
-%%% License, v. 2.0. If a copy of the MPL was not distributed with this
-%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%% This software is licensed as described in the file COPYRIGHT, which
+%%% you should have received as part of this distribution. The terms
+%%% are also available at http://www.rogvall.se/docs/copyright.txt.
+%%%
+%%% You may opt to use, copy, modify, merge, publish, distribute and/or sell
+%%% copies of the Software, and permit persons to whom the Software is
+%%% furnished to do so, under the terms of the COPYRIGHT file.
+%%%
+%%% This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+%%% KIND, either express or implied.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @author Marina Westman Lonne <malotte@malotte.net>
+%%% @copyright (C) 2016, Tony Rogvall
 %%% @doc
 %%%    EXO socket 
+%%%
+%%% Created : 15 Dec 2011 by Tony Rogvall
 %%% @end
-%%% Created : 15 Dec 2011 by Tony Rogvall <tony@rogvall.se>
-
+%%%-------------------------------------------------------------------
 -module(exo_socket).
 
 
@@ -41,6 +52,9 @@
 %%  [tcp,ssl,http]
 %%  [tcp,probe_ssl,http]
 %%  [tcp,http]
+%%  [tcp,ssl,mqtt]
+%%  [tcp,probe_ssl,mqtt]
+%%  [tcp,mqtt]
 %%
 %% coming soon: sctcp, ssh
 %%
@@ -56,12 +70,12 @@ listen(Port, Protos=[tcp|_], Opts0)
     lager:debug("options=~w\n", [Opts0]),
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
-    {TcpOpts, Opts2} = split_options(tcp_listen_options(), Opts1),
+    {TcpOpts, Opts2} = exo_lib:split_options(tcp_listen_options(), Opts1),
     lager:debug("listen options=~w, other=~w\n", [TcpOpts, Opts2]),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
-    {_, TcpOpts1} = split_options([active,packet,mode], TcpOpts),
+    {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
     TcpListenOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     case gen_tcp:listen(Port, TcpListenOpts) of
@@ -85,12 +99,12 @@ listen(File, Protos=[tcp|_], Opts0)
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
-    {TcpOpts, Opts2} = split_options(tcp_listen_options(), Opts1),
+    {TcpOpts, Opts2} = exo_lib:split_options(tcp_listen_options(), Opts1),
     lager:debug("listen options=~w, other=~w\n", [TcpOpts, Opts2]),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
-    {_, TcpOpts1} = split_options([active,packet,mode], TcpOpts),
+    {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
     TcpListenOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     file:delete(File),
@@ -129,11 +143,11 @@ connect(unix, File, Protos=[tcp|_], Opts0, Timeout)
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
-    {TcpOpts, Opts2} = split_options(tcp_connect_options(), Opts1),
+    {TcpOpts, Opts2} = exo_lib:split_options(tcp_connect_options(), Opts1),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
-    {_, TcpOpts1} = split_options([active,packet,mode], TcpOpts),
+    {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
     TcpConnectOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     case afunix:connect(File, TcpConnectOpts, Timeout) of
@@ -161,11 +175,11 @@ connect(unix, File, Protos=[tcp|_], Opts0, Timeout)
 connect(Host, Port, Protos=[tcp|_], Opts0, Timeout) -> %% tcp socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
-    {TcpOpts, Opts2} = split_options(tcp_connect_options(), Opts1),
+    {TcpOpts, Opts2} = exo_lib:split_options(tcp_connect_options(), Opts1),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
-    {_, TcpOpts1} = split_options([active,packet,mode], TcpOpts),
+    {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
     TcpConnectOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     case gen_tcp:connect(Host, Port, TcpConnectOpts, Timeout) of
@@ -284,8 +298,8 @@ connect_upgrade(X, Protos0, Timeout) ->
     case Protos0 of
 	[ssl|Protos1] ->
 	    Opts = X#exo_socket.opts,
-	    {SSLOpts0,Opts1} = split_options(ssl_connect_opts(),Opts),
-	    {_,SSLOpts} = split_options([ssl_imp], SSLOpts0),
+	    {SSLOpts0,Opts1} = exo_lib:split_options(ssl_connect_opts(),Opts),
+	    {_,SSLOpts} = exo_lib:split_options([ssl_imp], SSLOpts0),
 	    lager:debug("SSL upgrade, options = ~w\n", [SSLOpts]),
 	    lager:debug("before ssl:connect opts=~w\n", 
 		 [getopts(X, [active,packet,mode])]),
@@ -308,6 +322,11 @@ connect_upgrade(X, Protos0, Timeout) ->
 	    {_, Close,Error} = X#exo_socket.tags,
 	    X1 = X#exo_socket { packet = http, 
 				tags = {http, Close, Error }},
+	    connect_upgrade(X1, Protos1, Timeout);
+	[mqtt|Protos1] ->
+	    {_, Close,Error} = X#exo_socket.tags,
+	    X1 = X#exo_socket { packet = raw, 
+				tags = {mqtt, Close, Error }},
 	    connect_upgrade(X1, Protos1, Timeout);
 	[] ->
 	    setopts(X, [{mode,X#exo_socket.mode},
@@ -368,7 +387,7 @@ async_socket(Listen, Socket, AuthOpts, Timeout)
     Inherit = [nodelay,keepalive,delay_send,priority,tos],
     case getopts(Listen, Inherit) of
         {ok, Opts} ->  %% transfer listen options
-	    %% FIXME: here inet is assume, and currentl the only option
+	    %% FIXME: here inet is assumed, and currently the only option
 	    case inet:setopts(Socket, Opts) of
 		ok ->
 		    {ok,Mod} = inet_db:lookup_socket(Listen#exo_socket.socket),
@@ -421,8 +440,8 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    end;
 	[ssl|Protos1] ->
 	    Opts = X#exo_socket.opts,
-	    {SSLOpts0,Opts1} = split_options(ssl_listen_opts(),Opts),
-	    {_,SSLOpts} = split_options([ssl_imp], SSLOpts0),
+	    {SSLOpts0,Opts1} = exo_lib:split_options(ssl_listen_opts(),Opts),
+	    {_,SSLOpts} = exo_lib:split_options([ssl_imp], SSLOpts0),
 	    lager:debug("SSL upgrade, options = ~w\n", [SSLOpts]),
 	    lager:debug("before ssl_accept opt=~w\n", 
 		 [getopts(X, [active,packet,mode])]),
@@ -456,6 +475,11 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    {_, Close,Error} = X#exo_socket.tags,
 	    X1 = X#exo_socket { packet = http, 
 				tags = {http, Close, Error }},
+	    accept_upgrade(X1,Protos1,Timeout);
+	[mqtt|Protos1] ->
+	    {_, Close,Error} = X#exo_socket.tags,
+	    X1 = X#exo_socket { packet = mqtt, 
+				tags = {mqtt, Close, Error }},
 	    accept_upgrade(X1,Protos1,Timeout);
 	[] ->
 	    setopts(X, [{mode,X#exo_socket.mode},
@@ -529,16 +553,12 @@ request_type(<<"GET", _/binary>>) ->    http;
 request_type(<<"POST", _/binary>>) ->    http;
 request_type(<<"OPTIONS", _/binary>>) ->  http;
 request_type(<<"TRACE", _/binary>>) ->    http;
-request_type(<<1:1,_Len:15,1:8,_Version:16, _/binary>>) ->
-    ssl;
-request_type(<<ContentType:8, _Version:16, _Length:16, _/binary>>) ->
-    if ContentType == 22 ->  %% HANDSHAKE
-	    ssl;
-       true ->
-	    undefined
-    end;
-request_type(_) ->
-    undefined.
+request_type(<<1:1,_Len:15,1:8,_Version:16, _/binary>>) -> ssl;
+request_type(<<ContentType:8, _Version:16, _Length:16, _/binary>>) 
+  when ContentType =:= 22 -> ssl;
+request_type(<<PacketType:4, _Dup:1, _QoS:2, _Retain:1, _Rest/binary>>) 
+  when PacketType < 15 -> mqtt;
+request_type(_) -> undefined.
     
 %%
 %% exo_socket wrapper for socket operations
@@ -578,6 +598,7 @@ send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
     end.
 	    
 send1(#exo_socket { mdata = M, socket = S, mauth = undefined}, Data) ->
+    lager:debug("using ~p to send ~p", [M, Data]),
     M:send(S, Data);
 send1(#exo_socket { mdata = M, socket = S, mauth = A, auth_state = Sa} = X, 
       Data) ->
@@ -697,18 +718,3 @@ ssl_connect_opts() ->
      debug].
 
 
-split_options(Keys, Opts) ->
-    split_options(Keys, Opts, [], []).
-
-split_options(Keys, [{Key,Value}|KVs], List1, List2) ->
-    case lists:member(Key, Keys) of
-	true -> split_options(Keys, KVs, [{Key,Value}|List1], List2);
-	false -> split_options(Keys, KVs, List1, [{Key,Value}|List2])
-    end;
-split_options(Keys, [Key|KVs], List1, List2) ->
-    case lists:member(Key, Keys) of
-	true -> split_options(Keys, KVs, [Key|List1], List2);
-	false -> split_options(Keys, KVs, List1, [Key|List2])
-    end;
-split_options(_Keys, [], List1, List2) ->
-    {lists:reverse(List1), lists:reverse(List2)}.

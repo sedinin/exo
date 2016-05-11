@@ -106,13 +106,12 @@ start_link(Port, Options) ->
 do_start(Start, Port, Options) ->
     lager:debug("exo_http_server: ~w: port ~p, server options ~p",
 	   [Start, Port, Options]),
-    {SessionOptions,Options1} = opts_take([request_handler,
-					   access,
-					   private_key],
-					  Options),
+    {SessionOptions,Options1} = 
+	exo_lib:split_options([request_handler,access,private_key],
+			      Options),
     Dir = code:priv_dir(exo),
     Access = proplists:get_value(access, Options, []),
-    case validate_auth(Access) of
+    case exo_lib:validate_access(Access) of
 	ok ->
 	    exo_socket_server:Start(Port, 
 				    [tcp,probe_ssl,http],
@@ -380,9 +379,6 @@ handle_creds(Socket, Request, Body, Creds, State) ->
 	[] -> ok
     end.
     
-
-    
-
 handle_basic_auth(_Socket, _Request, _Body, {basic,AuthParams},
 		  _Cred={basic,_Path,User,Password,Realm}, State) ->
     AuthUser =  proplists:get_value(<<"user">>, AuthParams),
@@ -661,19 +657,6 @@ opt_take(K, L, Def) ->
 	false -> {Def,L}
     end.
 
-%% return a option list of value from Ks remove the keys found
-opts_take(Ks, L) ->
-    opts_take_(Ks, L, []).
-
-opts_take_([K|Ks], L, Acc) ->
-    case lists:keytake(K, 1, L) of
-	{value,Kv,L1} ->
-	    opts_take_(Ks, L1, [Kv|Acc]);
-	false ->
-	    opts_take_(Ks, L, Acc)
-    end;
-opts_take_([], L, Acc) ->
-    {lists:reverse(Acc), L}.
 
 %% @private
 handle_http_request(Socket, Request, Body) ->
@@ -695,95 +678,6 @@ handle_http_request(Socket, Request, Body) ->
     end.
 
 
-%%-----------------------------------------------------------------------------
-validate_auth([]) ->
-    ok;
-validate_auth([{Guard, Action} | Rest]) ->
-    case {validate_guard(Guard), validate_action(Action)} of
-	{ok, ok} -> validate_auth(Rest);
-	_O -> {error, invalid_access}
-    end;
-validate_auth([Other | Rest]) ->
-    %% Maybe old format?
-    case validate_access(Other) of
-	ok -> validate_auth(Rest);
-	_O -> {error, invalid_access}
-    end.
-	    
-validate_access({Tag, Path, User, Pass, Realm}) 
-  when (Tag =:= basic orelse Tag =:= digest) andalso
-       is_list(Path) andalso is_binary(User) andalso
-       is_binary(Pass) andalso is_list(Realm) ->
-    %% old format ok
-    ok;
-validate_access(_Other) ->
-    lager:error("Unknown access ~p", [_Other]),
-    {error, invalid_access}.
-
-validate_guard([]) ->
-    ok;
-validate_guard([Guard | Rest]) ->
-    case validate_guard(Guard) of
-	ok -> validate_guard(Rest);
-	E -> E
-    end;
-validate_guard({Tag, GuardList}) when Tag =:= any; Tag =:= all -> 
-    validate_guard(GuardList);
-validate_guard({IP, '*'}) -> validate_ip(IP);
-validate_guard({IP, Port}) when is_integer(Port) -> validate_ip(IP);
-validate_guard(http) -> ok;
-validate_guard(https) -> ok;
-validate_guard(afunix) -> ok;
-validate_guard(IP) 
-  when is_tuple(IP) andalso 
-       (tuple_size(IP) =:= 4 orelse tuple_size(IP) =:= 8) -> 
-    validate_ip(IP);
-validate_guard(_Other) -> 
-    lager:error("Unknown access guard ~p", [_Other]),
-    {error, invalid_access}.
-
-validate_ip(_IP={A, B, C, D}) ->
-    if (is_integer(A) orelse (A =:= '*')) andalso
-       (is_integer(B) orelse (B =:= '*')) andalso
-       (is_integer(C) orelse (C =:= '*')) andalso
-       (is_integer(D) orelse (D =:= '*')) ->
-	    ok;
-       true ->
-	    lager:error("Illegal IP address ~p", [_IP]),
-	    {error, invalid_access}
-    end;
-validate_ip(_IP={A, B, C, D, E, F, G, H}) ->
-    if (is_integer(A) orelse (A =:= '*')) andalso
-       (is_integer(B) orelse (B =:= '*')) andalso
-       (is_integer(C) orelse (C =:= '*')) andalso
-       (is_integer(D) orelse (D =:= '*')) andalso
-       (is_integer(E) orelse (E =:= '*')) andalso
-       (is_integer(F) orelse (F =:= '*')) andalso
-       (is_integer(G) orelse (G =:= '*')) andalso
-       (is_integer(H) orelse (H =:= '*')) ->
-	    ok;
-       true ->
-	    lager:error("Illegal IP address ~p", [_IP]),
-	    {error, invalid_access}
-    end;
-validate_ip(_Other) ->
-    lager:error("Illegal IP address ~p", [_Other]),
-    {error, invalid_access}.
-	    
-validate_action(Auth)
-  when Auth =:= accept;
-       Auth =:= reject ->
-    ok;
-validate_action({accept, AccessList} = A)->
-    case lists:all(fun(Access) ->
-			   validate_access(Access) =:= ok
-		   end, AccessList) of
-	true -> 
-	    ok;
-	false -> 
-	    lager:error("Illegal access ~p", [A]),
-	    {error, invalid_access}
-    end.
 
 
 

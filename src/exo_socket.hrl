@@ -1,18 +1,26 @@
 %%%---- BEGIN COPYRIGHT -------------------------------------------------------
 %%%
-%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%% Copyright (C) 2016, Rogvall Invest AB, <tony@rogvall.se>
 %%%
-%%% This Source Code Form is subject to the terms of the Mozilla Public
-%%% License, v. 2.0. If a copy of the MPL was not distributed with this
-%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%% This software is licensed as described in the file COPYRIGHT, which
+%%% you should have received as part of this distribution. The terms
+%%% are also available at http://www.rogvall.se/docs/copyright.txt.
+%%%
+%%% You may opt to use, copy, modify, merge, publish, distribute and/or sell
+%%% copies of the Software, and permit persons to whom the Software is
+%%% furnished to do so, under the terms of the COPYRIGHT file.
+%%%
+%%% This software is distributed on an "AS IS" basis, WITHOUT WARRANTY OF ANY
+%%% KIND, either express or implied.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2011, Tony Rogvall
+%%% @copyright (C) 2016, Tony Rogvall
 %%% @doc
 %%%    EXO socket definition
+%%%
+%%% Created : 15 Dec 2011 by Tony Rogvall
 %%% @end
-%%% Created : 15 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -ifndef(_EXO_SOCKET_HRL_).
 -define(_EXO_SOCKET_HRL_, true).
