@@ -96,12 +96,13 @@ parse_field(Bin) ->
     {<<>>, Bin}.
 
 pack_field(String) when is_list(String) ->
-    lager:debug("pack field ~p",[Field]),
+    lager:debug("pack field ~p",[String]),
     StringBin = unicode:characters_to_binary(String),
     Len = size(StringBin),
     true = (Len =< 16#ffff),
     <<Len:16/big, StringBin/binary>>;
 pack_field(Bin) when is_binary(Bin) ->
+    lager:debug("pack field ~p",[Bin]),
     Len = size(Bin),
     true = (Len =< 16#ffff),
     <<Len:16/big, Bin/binary>>.
