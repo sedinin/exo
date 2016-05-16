@@ -46,10 +46,11 @@
 %% Applied function
 -export([handle_mqtt/2]).  
 
--record(state,
+-record(ctx,
 	{
-	  request,
-	  response,
+	  state = init,
+	  topic = <<>>,
+	  request = "",
 	  authorized = false :: boolean(),
 	  private_key = "" :: string(),
 	  mqtt_handler
@@ -128,7 +129,7 @@ stop(Pid) ->
 %%-----------------------------------------------------------------------------
 -spec init(Socket::#exo_socket{},
 	   ServerOptions::list({Option::atom(), Value::term()})) ->
-		  {ok, State::#state{}}.
+		  {ok, Ctx::#ctx{}}.
 
 init(Socket, Options) ->
     lager:debug("exo_mqtt_server: connection on: ~p ", [Socket]),
@@ -139,7 +140,7 @@ init(Socket, Options) ->
     Access = proplists:get_value(access, Options, []),
     MH = proplists:get_value(mqtt_handler, Options, undefined),
     PrivateKey = proplists:get_value(private_key, Options, ""),
-    {ok, #state{private_key=PrivateKey, mqtt_handler = MH}}.
+    {ok, #ctx{private_key=PrivateKey, mqtt_handler = MH}}.
 
 %% To avoid a compiler warning. Should we actually support something here?
 %%-----------------------------------------------------------------------------
@@ -149,11 +150,11 @@ init(Socket, Options) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec control(Socket::#exo_socket{},
-	      Request::term(), From::term(), State::#state{}) ->
-		     {ignore, State::#state{}}.
+	      Request::term(), From::term(), Ctx::#ctx{}) ->
+		     {ignore, Ctx::#ctx{}}.
 
-control(_Socket, _Request, _From, State) ->
-    {ignore, State}.
+control(_Socket, _Request, _From, Ctx) ->
+    {ignore, Ctx}.
 
 %%-----------------------------------------------------------------------------
 %% @doc
@@ -163,11 +164,11 @@ control(_Socket, _Request, _From, State) ->
 %%-----------------------------------------------------------------------------
 -spec data(Socket::#exo_socket{},
 	   Data::term(),
-	   State::#state{}) ->
-		  {ok, NewState::#state{}} |
-		  {stop, {error, Reason::term()}, NewState::#state{}}.
+	   Ctx::#ctx{}) ->
+		  {ok, NewCtx::#ctx{}} |
+		  {stop, {error, Reason::term()}, NewCtx::#ctx{}}.
 
-data(Socket, Data, State) ->
+data(Socket, Data, Ctx) ->
     lager:debug("data = ~w\n", [Data]),
     case Data of
 	<<Type:4, Duplicate:1, QoS:2, Retain:1, Rest/binary>> ->
@@ -178,12 +179,12 @@ data(Socket, Data, State) ->
 				      qos = QoS,
 				      retain = Retain},
 			parse_mqtt(Rest),
-			State);
+			Ctx);
 	_ when is_list(Data); is_binary(Data) ->
 	    lager:debug("unknown mqtt msg: ~p\n", [Data]),
-	    {stop, {error, sync_error}, State};
+	    {stop, {error, sync_error}, Ctx};
 	Error ->
-	    {stop, Error, State}
+	    {stop, Error, Ctx}
     end.
 
 %%-----------------------------------------------------------------------------
@@ -193,12 +194,12 @@ data(Socket, Data, State) ->
 %% @end
 %%-----------------------------------------------------------------------------
 -spec close(Socket::#exo_socket{},
-	    State::#state{}) ->
-		   {ok, NewState::#state{}}.
+	    Ctx::#ctx{}) ->
+		   {ok, NewCtx::#ctx{}}.
 
-close(_Socket, State) ->
-    lager:debug("exo_mqtt_server: close\n", []),
-    {ok,State}.
+close(_Socket, Ctx) ->
+    lager:debug("close\n", []),
+    {ok,Ctx}.
 
 %%-----------------------------------------------------------------------------
 %% @doc
@@ -209,22 +210,67 @@ close(_Socket, State) ->
 %%-----------------------------------------------------------------------------
 -spec error(Socket::#exo_socket{},
 	    Error::term(),
-	    State::#state{}) ->
-		   {stop, {error, Reason::term()}, NewState::#state{}}.
+	    Ctx::#ctx{}) ->
+		   {stop, {error, Reason::term()}, NewCtx::#ctx{}}.
 
-error(_Socket,Error,State) ->
+error(_Socket,Error,Ctx) ->
     lager:debug("exo_mqtt_serber: error = ~p\n", [Error]),
-    {stop, Error, State}.
+    {stop, Error, Ctx}.
 
 
-handle_mqtt(_Socket, _Header, {error, Error}, State) ->
-    {stop, Error, State};
+handle_mqtt(_Socket, _Header, {error, Error}, Ctx) ->
+    {stop, Error, Ctx};
 handle_mqtt(Socket, 
-	    Header=#mqtt_header{type = ?MQTT_CONNECT,
-				duplicate = Duplicate, 
-				qos = QoS, retain = Retain}, 
-	    Packet=#mqtt_packet{length = L, bin = Bin}, State) ->
+	    Header=#mqtt_header{type = ?MQTT_CONNECT}, 
+	    Packet, Ctx) ->
     lager:debug("connect ~p", [Packet]),
+    handle_connect(Socket, Header, Packet, Ctx);
+handle_mqtt(_Socket, #mqtt_header{type = ?MQTT_DISCONNECT}, 
+	    _Packet=#mqtt_packet{length = 0, bin = <<>>}, Ctx) ->
+    lager:debug("disconnect ~p", [_Packet]),
+    {stop, normal, Ctx#ctx {state = disconnected}};
+handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_PINGREQ},
+	    Packet=#mqtt_packet{length = 0, bin = <<>>}, Ctx) ->
+    lager:debug("ping ~p", [Packet]),
+    send_response(Socket, Header, ?MQTT_PINGRESP, <<>>, <<>>),
+    {ok, Ctx};
+handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_SUBSCRIBE}, 
+	    Packet, Ctx=#ctx {state = connected}) ->
+    lager:debug("subscribe ~p\n", [Packet]),
+    handle_subscribe(Socket, Header, Packet, Ctx);
+handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_SUBSCRIBE}, 
+	    Packet, Ctx) ->
+    lager:debug("unexpected subscribe ~p in ~p\n", [Packet, Ctx]),
+    nack_subscribe(Socket, Header, Packet, Ctx);
+handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_UNSUBSCRIBE}, 
+	    Packet, Ctx=#ctx {state = State})
+    when State =:= subscribed;
+	 State =:= requested;
+	 State =:= responded ->
+    lager:debug("unsubscribe ~p\n", [Packet]),
+    handle_unsubscribe(Socket, Header, Packet, Ctx);
+handle_mqtt(_Socket, #mqtt_header{type = ?MQTT_UNSUBSCRIBE}, 
+	    _Packet, Ctx) -> 
+    lager:debug("unexpected unsubscribe ~p in ~p\n", [_Packet, Ctx]),
+    {ok, Ctx};     %% or stop??
+handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_PUBLISH, qos = 0}, 
+	    Packet, Ctx=#ctx {state = subscribed}) -> %% and requested ??
+    lager:debug("publish ~p", [Packet]),
+    %% No response when qos is 0
+    handle_publish(Socket, Header, Packet, Ctx);
+handle_mqtt(_Socket, #mqtt_header{type = ?MQTT_PUBLISH, qos = _QoS}, 
+	    _Packet, Ctx) -> %% and requested ??
+    lager:debug("publish ~p", [_Packet]),
+    lager:debug("unexpected publish ~p in ~p\n", [_Packet, Ctx]),
+    {ok, Ctx};    %% or stop??
+handle_mqtt(_Socket, #mqtt_header{type = _Type}, _Packet, Ctx) ->
+    lager:debug("unexpected ~p: ~p in ~p", [_Type,_Packet, Ctx]),
+    {stop, faulty_message, Ctx}.
+
+handle_connect(Socket, 
+	       Header=#mqtt_header{duplicate = Duplicate, 
+				   qos = QoS, retain = Retain}, 
+	       _Packet=#mqtt_packet{length = L, bin = Bin}, Ctx) ->
     case Bin of
 	<<FrameBin:L/binary, Rest/binary>> ->
             {ProtoName, Rest1} = parse_field(FrameBin, 1),
@@ -245,78 +291,171 @@ handle_mqtt(Socket,
             {PassWord, <<>>}  = parse_field(Rest7, PasswordFlag),
 	    lager:debug("client ~p", [ClientId]),
 	    lager:debug("user ~p, password ~p", [UserName, PassWord]),
-	    ConnectAck = 
-		exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_CONNACK},
-				     {0, ?MQTT_CONNACK_ACCEPT},
-				     <<>>),
-	    exo_socket:send(Socket,ConnectAck),
-	    {ok, State};
+	    send_response(Socket, Header, ?MQTT_CONNACK, 
+			  {0, ?MQTT_CONNACK_ACCEPT}, <<>>),
+	    {ok, Ctx#ctx {state = connected}};
 	_ ->
-	    {stop, faulty_message, State}
-    end;
-handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_PINGREQ},
-	    Packet=#mqtt_packet{length = 0, bin = <<>>}, State) ->
-    lager:debug("ping ~p", [Packet]),
-    PingResp = exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_PINGRESP},
-				   <<>>, <<>>),
-    exo_socket:send(Socket,PingResp),
-    {ok, State};
-handle_mqtt(_Socket, Header=#mqtt_header{type = ?MQTT_DISCONNECT}, 
-	    _Packet=#mqtt_packet{length = 0, bin = <<>>}, State) ->
-    lager:debug("disconnect ~p", [_Packet]),
-    {stop, normal, State};
-handle_mqtt(Socket, Header=#mqtt_header{type = _Type}, 
-	    _Packet=#mqtt_packet{length = L, bin = Bin}, State) ->
-    lager:debug("~p: ~p", [_Type,_Packet]),
-    case Bin of
-	<<FrameBin:L/binary, Rest/binary>> ->
-           <<PacketId:16/big, Rest1/binary>> = FrameBin,
-	    handle_message(Socket, Header, 
-			   #mqtt_message{packet_id = PacketId, bin = Rest1}, 
-			   State);
-	_ ->
-	    {stop, faulty_message, State}
+ 	    lager:warning("faulty message in ~p", [Ctx]),
+	    {stop, faulty_message, Ctx}
     end.
 
-handle_message(Socket, Header=#mqtt_header{type = ?MQTT_SUBSCRIBE}, 
-	       Msg=#mqtt_message{packet_id = Id, bin = Bin}, State) ->
-    lager:debug("subscribe ~p\n", [Msg]),
-    [{Topic, QoS}] = exo_mqtt:parse_topics(?MQTT_SUBSCRIBE, Bin),
-    lager:debug("topic ~p\n", [Topic]),
-    SubAck =  
-	exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_SUBACK},
-			    Id, [QoS]),
-    exo_socket:send(Socket, SubAck),
-    to_handler(Socket, Topic, State).
+handle_subscribe(Socket, Header, Packet, Ctx) ->
+    lager:debug("subscribe ~p\n", [Packet]),
+    case parse_packet(Packet) of
+	{PacketId, Rest} ->
+  	    case exo_mqtt:parse_topics(?MQTT_SUBSCRIBE, Rest) of
+		[{Topic, _QoS}] -> %% QoS ignored ???
+		    lager:debug("topic ~p\n", [Topic]),
+		    do_subscribe(Socket, Header, Topic, PacketId, Ctx);
+		_Other ->
+		    lager:warning("faulty subscribe topic ~p in ~p", 
+				  [_Other, Ctx]),
+		    nack_subscribe(Socket, Header, Packet, Ctx)
+	    end;
+	_ ->
+	    lager:warning("faulty message in ~p", [Ctx]),
+	    nack_subscribe(Socket, Header, Packet, Ctx)
+    end.
 
+do_subscribe(Socket, Header, Topic, PacketId, Ctx) ->
+     case Topic of
+	<<"events/", Filter/binary>> ->
+	    send_response(Socket, Header, ?MQTT_SUBACK, PacketId, 
+			  [?MQTT_SUBSCRIBE_QOS0]),
+	    to_handler(Socket, Topic, 
+		       Ctx#ctx {state = subscribed, topic = Topic, 
+				request = Filter});
+	<<"response/", Request/binary>> ->
+	    send_response(Socket, Header, ?MQTT_SUBACK, PacketId, 
+			  [?MQTT_SUBSCRIBE_QOS0]),
+	    {ok, Ctx#ctx {state = subscribed, topic = Topic, 
+			  request = Request}};
+	_Other ->
+	    lager:warning("faulty subscribe topic ~p in ~p", 
+			  [_Other, Ctx]),
+	    send_response(Socket, Header, ?MQTT_SUBACK, PacketId, 
+			  [?MQTT_SUBSCRIBE_FAIL]),
+	    {stop, faulty_message, Ctx}
+    end.
 
-to_handler(Socket, Topic, State=#state {mqtt_handler = MH}) ->
+nack_subscribe(Socket, Header, Packet, Ctx) ->
+    case parse_packet(Packet) of
+	{PacketId, _Rest} ->
+	    send_response(Socket, Header, ?MQTT_SUBACK, PacketId, 
+			  [?MQTT_SUBSCRIBE_FAIL]),
+	    {ok, Ctx};
+	_Bin ->
+	    lager:debug("not possible to nack ~p", [Packet]),
+	    {stop, faulty_subscribe, Ctx}
+    end.
+
+handle_unsubscribe(Socket, Header, Packet, Ctx=#ctx {topic = Topic}) ->
+    case parse_packet(Packet) of
+	{PacketId, Rest} ->
+  	    case exo_mqtt:parse_topics(?MQTT_UNSUBSCRIBE, Rest) of
+		[Topic] -> %% match with topic saved in ctx
+		    lager:debug("topic ~p\n", [Topic]),
+		    do_unsubscribe(Socket, Header, Topic, PacketId, Ctx);
+		_Other ->
+		    lager:warning("faulty subscribe topic ~p in ~p", 
+				  [_Other, Ctx]),
+		    {stop, faulty_message, Ctx}
+	    end;
+	_ ->
+	    lager:warning("faulty message in ~p", [Ctx]),
+	    {stop, faulty_message, Ctx}
+   end.
+		    
+ 
+do_unsubscribe(Socket, Header, Topic, PacketId, Ctx=#ctx {request = Filter}) ->
+    send_response(Socket, Header, ?MQTT_UNSUBACK, PacketId, <<>>),
+    case Topic of
+	<<"events/", Filter/binary>> -> %% match with filter saved in ctx
+	    %% somehow stop event-channel??
+	    {ok, Ctx#ctx {state = connected, topic = <<>>, 
+			  request = <<>>}};
+	 _Other ->
+ 	    lager:debug("unsubscribe of ~p ignored", [_Other]),
+	    {ok, Ctx}
+   end.
+
+handle_publish(Socket, Header, 
+	       _Packet=#mqtt_packet{length = L, bin = Bin}, Ctx) ->
+    case Bin of
+	<<FrameBin:L/binary, Rest/binary>> ->
+            {Topic, Rest1} = parse_field(FrameBin, 1),
+	    do_publish(Socket, Header, Topic, Ctx);
+	_ ->
+	    lager:warning("faulty message in ~p", [Ctx]),
+	    {stop, faulty_message, Ctx}
+    end.
+
+do_publish(Socket, Header, Topic, Ctx=#ctx {request = Request})->
+    case Topic of
+	<<"request/", Request/binary>> -> %% match with request saved in ctx
+	    send_response(Socket, Header, ?MQTT_PUBACK, 0, <<>>), 
+	    to_handler(Socket, Topic, 
+		       Ctx#ctx {state = requested});
+	 _Other ->
+ 	    lager:debug("publish of ~p ignored", [_Other]),
+	    {ok, Ctx}
+   end.
+
+to_handler(Socket, Topic, Ctx=#ctx {mqtt_handler = MH}) ->
     %% Send to handler
     {M, F, As} = mqtt_handler(MH, [Socket, Topic]),
     try apply(M, F, As) of
 	ok -> 
-	    {ok, State};
+	    {ok, Ctx};
 	{ok, Reply} -> 
 	    lager:debug("reply ~p", [Reply]),
 	    publish(Socket, Topic, Reply), 
-	    {ok, State};
+	    {ok, Ctx#ctx {state = responded}};
 	stop -> 
-	    {stop, normal, State};
+	    {stop, normal, Ctx};
 	{error, Error} ->  
 	    lager:error("call to mqtt_handler ~p returned ~p",[MH, Error]),
-	    {ok, State}
+	    {ok, Ctx}
     catch error:_E ->
 	    lager:error("call to mqtt_handler ~p failed, reason ~p, stack ~p",
 			[MH, _E, erlang:get_stacktrace()]),
-	    {ok, State}
+	    {ok, Ctx}
     end.
  
+  
 publish(Socket, Topic, Msg) ->
     lager:debug("topic ~p, message ~p", [Topic, Msg]),
     Publish = exo_mqtt:make_packet(#mqtt_header{type = ?MQTT_PUBLISH},
 				   Topic, Msg),
     exo_socket:send(Socket, Publish),
     ok.
+
+send_response(Socket, Header, Type, PacketId, PayLoad) ->
+    Response = exo_mqtt:make_packet(Header#mqtt_header{type = Type},
+				    PacketId, PayLoad), 
+    exo_socket:send(Socket, Response).
+   
+
+send_subscribe_ack(Socket, Header,  PacketId) ->
+   SubAck = exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_SUBACK},
+				  PacketId, [?MQTT_SUBSCRIBE_QOS0]), 
+    exo_socket:send(Socket, SubAck).
+  
+send_subscribe_nack(Socket, Header, PacketId) ->
+    SubNAck = exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_SUBACK},
+				   PacketId, [?MQTT_SUBSCRIBE_FAIL]),
+    exo_socket:send(Socket, SubNAck).
+	    
+send_unsubscribe_ack(Socket, Header, PacketId) ->
+    UnSubAck = exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_UNSUBACK},
+				   PacketId, <<>>), 
+    exo_socket:send(Socket, UnSubAck).
+
+send_publish_ack(Socket, Header) ->
+    PubAck = exo_mqtt:make_packet(Header#mqtt_header{type = ?MQTT_PUBACK},
+				  0, <<>>), 
+    exo_socket:send(Socket, PubAck).
+  
 
 %% @private
 mqtt_handler(undefined, Args) ->
@@ -329,8 +468,8 @@ mqtt_handler({Module, Function, XArgs}, Args) ->
     {Module, Function, Args ++ [XArgs]}.
 
 %% @private
-handle_mqtt(Socket, Topic) ->
-    lager:debug("Topic ~p ignored", [Topic]),
+handle_mqtt(_Socket, _Topic) ->
+    lager:debug("Topic ~p ignored", [_Topic]),
     ok.
 
 
@@ -338,25 +477,34 @@ handle_mqtt(Socket, Topic) ->
 parse_mqtt(Bin) ->
     parse_mqtt(Bin, #mqtt_packet{}, 1, 0, ?MQTT_MAX_LEN).
 
-parse_mqtt(_Bin, _MqttMsg, _Mutltiplier, Length, Max)
+parse_mqtt(_Bin, _MqttPacket, _Mutltiplier, Length, Max)
   when Length > Max ->
     {error, too_long};
-parse_mqtt(<<>>, MqttMsg, Mutltiplier, Length, Max) ->
-    MqttMsg#mqtt_packet{length = Length};
-parse_mqtt(<<0:1, 2:7, Rest/binary>>, MqttMsg, 1, 0, _Limit) ->
-    MqttMsg#mqtt_packet{length = 2, bin = Rest};
-parse_mqtt(<<0:8, Rest/binary>>, MqttMsg, 1, 0, _Limit) ->
-    MqttMsg#mqtt_packet{length = 0, bin = Rest};
-parse_mqtt(<<1:1, Len:7, Rest/binary>>, MqttMsg, Multiplier, Length, Max) ->
-    parse_mqtt(Rest, MqttMsg, Multiplier * ?MQTT_HIGHBIT, 
+parse_mqtt(<<>>, MqttPacket, _Mutltiplier, Length, _Max) ->
+    MqttPacket#mqtt_packet{length = Length};
+parse_mqtt(<<0:1, 2:7, Rest/binary>>, MqttPacket, 1, 0, _Limit) ->
+    MqttPacket#mqtt_packet{length = 2, bin = Rest};
+parse_mqtt(<<0:8, Rest/binary>>, MqttPacket, 1, 0, _Limit) ->
+    MqttPacket#mqtt_packet{length = 0, bin = Rest};
+parse_mqtt(<<1:1, Len:7, Rest/binary>>, MqttPacket, Multiplier, Length, Max) ->
+    parse_mqtt(Rest, MqttPacket, Multiplier * ?MQTT_HIGHBIT, 
 	       Length + Len * Multiplier, Max);
-parse_mqtt(<<0:1, Len:7, Rest/binary>>, MqttMsg,  Multiplier, Length, Max) ->
+parse_mqtt(<<0:1, Len:7, Rest/binary>>, MqttPacket,  Multiplier, Length, Max) ->
     FrameLength = Length + Len * Multiplier,
     if
         FrameLength > Max -> {error, too_long};
-        true -> MqttMsg#mqtt_packet{length = FrameLength, bin = Rest}
+        true -> MqttPacket#mqtt_packet{length = FrameLength, bin = Rest}
     end.
     
+parse_packet(Packet=#mqtt_packet{length = L, bin = Bin}) ->
+    case Bin of
+	<<FrameBin:L/binary, _Rest/binary>> ->
+           <<PacketId:16/big, Rest1/binary>> = FrameBin,
+	    {PacketId, Rest1};
+	_ ->
+	    lager:warning("not able to parse packet ~p",[Packet]),
+	    Bin
+    end.
 
 parse_field(Bin, 0) -> {undefined, Bin};
 parse_field(Bin, _Flag) -> exo_mqtt:parse_field(Bin).

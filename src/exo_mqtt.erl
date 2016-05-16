@@ -47,12 +47,12 @@ pack(#mqtt_header{type = Type, duplicate = Duplicate,
 	    
 pack_data(?MQTT_CONNACK, {Flags, Reply}) ->
     <<Flags:8, Reply:8>>;
-pack_data(?MQTT_SUBACK, Id) ->
-    <<Id:16/big>>;
 pack_data(?MQTT_PUBLISH, Topic) ->
     pack_field(Topic);
 pack_data(?MQTT_PINGRESP, <<>>) ->
-    <<>>.
+    <<>>;
+pack_data(_Type, Id) when is_integer(Id)->
+    <<Id:16/big>>.
 
 pack_payload(_Type, <<>>) ->
     <<>>;

@@ -48,7 +48,7 @@
 -type mqtt_packet_type() :: ?MQTT_RESERVED..?MQTT_DISCONNECT.
 
 %%--------------------------------------------------------------------
-%% MQTT Connect Ack
+%% MQTT Acks
 %%--------------------------------------------------------------------
 -define(MQTT_CONNACK_ACCEPT,      0).  
 -define(MQTT_CONNACK_PROTO_VER,   1).  
@@ -56,6 +56,9 @@
 -define(MQTT_CONNACK_SERVER,      3).  
 -define(MQTT_CONNACK_CREDENTIALS, 4).  
 -define(MQTT_CONNACK_AUTH,        5).  
+
+-define(MQTT_SUBSCRIBE_QOS0,      16#00).  
+-define(MQTT_SUBSCRIBE_FAIL,      16#80).  
 
 -define(MQTT_MAX_LEN, 16#fffffff).
 -define(MQTT_HIGHBIT, 2#10000000).

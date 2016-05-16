@@ -80,7 +80,7 @@
 	]).
 -export([url_decode/1,
 	 parse_query/1]).
--export([parse_alt_query/1, parse_alt_seq/1, parse_kv/1]).
+-export([parse_alt_query/1, parse_alt_seq/1, parse_alt_seq/2, parse_kv/1]).
 -export([make_digest_response/3]).
 
 
@@ -932,6 +932,8 @@ parse_alt_query(Cs) ->
 %% allow k<v,k<=v,k=v,k>v,k>=,k<>v (with or without url encoding)
 parse_alt_seq(Cs) ->
     [parse_kv(Kv) || Kv <- string:tokens(Cs, "&")].
+parse_alt_seq(Cs, Separator) ->
+    [parse_kv(Kv) || Kv <- string:tokens(Cs, Separator)].
 
 parse_kv(Cs) ->
     parse_kv(Cs,[]).
