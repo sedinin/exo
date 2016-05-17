@@ -7,7 +7,8 @@
                   kernel,
                   stdlib,
 		  lager,
-		  afunix
+		  afunix,
+		  ssl
                  ]},
   {mod, { exo_app, []}},
   {env, []}
