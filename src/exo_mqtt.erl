@@ -56,12 +56,12 @@ pack_data(_Type, Id) when is_integer(Id)->
 
 pack_payload(_Type, <<>>) ->
     <<>>;
-pack_payload(_Type, Bin) when is_binary(Bin)->
-    Bin;
 pack_payload(?MQTT_SUBACK, QoSList) ->
     << <<Q:8>> || Q <- QoSList >>;
-pack_payload(?MQTT_PUBLISH, PayLoad) ->
-    pack_field(PayLoad).
+pack_payload(_Type, Bin) when is_binary(Bin)->
+    Bin;
+pack_payload(_Type, PayLoad) when is_list(PayLoad)->
+    list_to_binary(PayLoad).
 
 pack_length(N) when N =< ?MQTT_LOWBITS ->
     <<0:1, N:7>>;

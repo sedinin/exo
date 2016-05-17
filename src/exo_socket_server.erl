@@ -86,6 +86,10 @@
 %%      {send, Bin::binary(), NewState::state()} |<br/>
 %%      {data, Data::term(), NewState::state()} |<br/>
 %%      {stop, Reason::term(),NewState::state()}<br/></li>
+%% <li>info(Socket::socket(), Data::io_list(), State::state()) <br/>
+%%   -> {ok,NewState::state()}|<br/>
+%%      {close,NewState::state()}|<br/>
+%%      {stop,Reason::term(),NewState::state()}<br/></li>
 %% </ul>
 %% @end
 %%--------------------------------------------------------------------
@@ -100,11 +104,13 @@ behaviour_info(callbacks) ->
                   %%   -> {ok,state()}
      {error, 3},  %% error(Socket::socket(),Error::error(), State:state())
                   %%   -> {ok,state()} | {stop,reason(),state()}
-     {control, 4} %% control(Socket::socket(), Request::term(), 
+     {control, 4},%% control(Socket::socket(), Request::term(), 
                   %%         From::term(), State:state())
                   %%   -> {reply, Reply::term(),state()} | {noreply, state()} |
                   %%      {ignore, state()} | {send, Bin::binary(), state()} |
                   %%      {data, Data::trem()} |{stop,reason(),state()}
+     {info,  3}   %% data(Socket::socket(), Data::io_list(), State::state()) 
+                  %%   -> {ok,state()}|{close,state()}|{stop,reason(),state()}
     ];
 behaviour_info(_Other) ->
     undefined.

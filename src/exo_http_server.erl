@@ -22,10 +22,10 @@
 %% exo_socket_server callbacks
 -export([init/2,
 	 data/3,
+	 info/3,
 	 close/2,
-	 error/3]).
-
--export([control/4]).
+	 error/3,
+	 control/4]).
 
 -include("exo_socket.hrl").
 -include("exo_http.hrl").
@@ -205,6 +205,22 @@ data(Socket, Data, State) ->
 	Error ->
 	    {stop, Error, State}
     end.
+
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Info function called when info is received.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
+-spec info(Socket::#exo_socket{},
+	   Info::term(),
+	   State::#state{}) ->
+		  {ok, NewState::#state{}} |
+		  {stop, {error, Reason::term()}, NewState::#state{}}.
+
+info(Socket, Info, State) ->
+    lager:debug("exo_http_server:~w: info = ~w\n", [self(),Info]),
+    {ok,State}.
 
 %%-----------------------------------------------------------------------------
 %% @doc

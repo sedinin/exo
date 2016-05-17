@@ -127,7 +127,7 @@ handle_call(Request, From,
 mod_reply({data, Data, MSt}, _, State) ->
     %% This case is when data has come from an external source
     %% that needs an additonal ok reply
-    case handle_socket_data(Data, State#state{state = MSt}) of
+    case handle_socket_data(Data, data, State#state{state = MSt}) of
 	{noreply, NewState} -> {reply, ok, NewState};
 	Other -> Other
     end;
@@ -232,7 +232,7 @@ handle_info({Tag,Socket,Data0}, State) when
 	<<"reuse%", Rest/binary>> ->
 	    handle_reuse_data(Rest, State);
 	Data ->
-	    handle_socket_data(Data, State)
+	    handle_socket_data(Data, data, State)
     catch
 	error:_ ->
 	    exo_socket:shutdown(State#state.socket, write),
@@ -265,9 +265,13 @@ handle_info({timeout, Ref, {active, Value}},
     exo_socket:setopts(State#state.socket, [{active,Value}]),
     {noreply, State#state {active_timer = undefined}};
 
-handle_info(_Info, State) ->
-    lager:debug("Got info: ~p\n", [_Info]),
-    ret({noreply, State}).
+handle_info(Info, State) ->
+    lager:debug("Got info: ~p\n", [Info]),
+    try handle_socket_data(Info, info, State)
+    catch error:_E ->
+	    lager:debug("call failed, reason ~p\n", [_E]),
+	    ret({noreply, State})
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -337,9 +341,9 @@ handle_reuse_data(Rest, #state{module = M, state = MSt} = State) ->
     end,
     ret({noreply, State1}).
 
-handle_socket_data(Data, State=#state {module = M, state = CSt0, socket = S}) ->
+handle_socket_data(Data, F, State=#state {module = M, state = CSt0, socket = S}) ->
     lager:debug("call ~p", [M]),
-    ModResult = apply(M, data, [S,Data,CSt0]),
+    ModResult = apply(M, F, [S,Data,CSt0]),
     lager:debug("result ~p", [ModResult]),
     maybe_flow_control(S, use, 1), %% Count down
     handle_module_result(ModResult, State).
