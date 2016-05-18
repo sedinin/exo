@@ -406,7 +406,7 @@ do_publish(Socket, Header, Topic, Ctx)->
 	    {ok, NewCtx};
 	{{ok, {ResponseTopic, Data}}, NewCtx} ->
 	    send_response(Socket, Header, ?MQTT_PUBACK, 0, <<>>),
-	    publish(Socket, ResponseTopic, Data),
+	    publish(Socket, ResponseTopic, Data, Ctx),
 	    {ok, NewCtx};
 	_Other ->
 	    lager:warning("handler publish result ~p in ~p",  
@@ -418,12 +418,8 @@ handle_info(Socket, Info, Ctx) ->
     case to_handler(Socket, {info, Info}, Ctx) of
 	{ok, NewCtx} ->
 	    {ok, NewCtx};
-	{{ok, ResponseTopic, Data}, NewCtx} ->
-	    publish(Socket, ResponseTopic, Data),
-	    {ok, NewCtx};
 	_Other ->
-	    lager:warning("handler info result ~p in ~p",  
-			  [_Other, Ctx]),
+	    lager:warning("handler info result ~p in ~p",  [_Other, Ctx]),
 	    {ok, Ctx}
     end.
    
@@ -432,6 +428,8 @@ to_handler(Socket, Data, Ctx=#ctx {mqtt_handler = MH, handler_ctx = Hctx}) ->
     %% Send to handler
     {M, F, As} = mqtt_handler(MH, [Socket, Data, Hctx]),
     try apply(M, F, As) of
+	ok ->
+	    {ok, Ctx};
 	{ok, NewHctx} -> 
 	    {ok, Ctx#ctx {handler_ctx = NewHctx}};
 	{{ok, _Result} = Reply, NewHctx} -> 
@@ -448,6 +446,13 @@ to_handler(Socket, Data, Ctx=#ctx {mqtt_handler = MH, handler_ctx = Hctx}) ->
 	    {ok, Ctx} %% or stop ??
     end.
  
+publish(Socket, Topic, Data, #ctx {topics = Topics}) ->
+    case lists:member(Topic, Topics) of
+	true -> 
+	    publish(Socket, Topic, Data);
+	false ->
+	    lager:warning("not publishing unsubscribed topic ~p",[Topic])
+    end.
   
 publish(Socket, Topic, Msg) ->
     lager:debug("topic ~p, message ~p", [Topic, Msg]),
