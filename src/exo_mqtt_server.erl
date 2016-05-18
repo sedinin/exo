@@ -27,6 +27,7 @@
 -module(exo_mqtt_server).
 -behaviour(exo_socket_server).
 
+-include("exo.hrl").
 -include("exo_socket.hrl").
 -include("../include/exo_mqtt.hrl").
 
@@ -38,21 +39,25 @@
 	 error/3,
 	 control/4]).
 
-%% Configurable start
+%% configurable start
 -export([start/2,
 	 start_link/2,
 	 stop/1]).
+
+%% mqtt specific auth-handling
+-export([handle_creds/3]).
+
+%% send on socket
 -export([publish/3]).
 
-%% Applied function
+%% applied function
 -export([handle_mqtt/2]).  
 
 -record(ctx,
 	{
 	  state = init::atom(),
 	  topics = []::list(),
-	  authorized = false ::boolean(),
-	  private_key = "" ::string(),
+	  access::list(access()),
 	  mqtt_handler::term(), 
 	  handler_ctx::term()
 	}).
@@ -94,7 +99,7 @@ do_start(Start, Port, Options) ->
     lager:debug("exo_mqtt_server: ~w: port ~p, server options ~p",
 	   [Start, Port, Options]),
     {SessionOptions,Options1} = 
-	exo_lib:split_options([mqtt_handler],Options),
+	exo_lib:split_options([mqtt_handler, access],Options),
     Dir = code:priv_dir(exo),
     Access = proplists:get_value(access, Options, []),
     case exo_lib:validate_access(Access) of
@@ -140,8 +145,7 @@ init(Socket, Options) ->
 		"options ~p", [_PeerName, _SockName, Options]),
     Access = proplists:get_value(access, Options, []),
     MH = proplists:get_value(mqtt_handler, Options, undefined),
-    PrivateKey = proplists:get_value(private_key, Options, ""),
-    {ok, #ctx{private_key=PrivateKey, mqtt_handler = MH}}.
+    {ok, #ctx{access = Access, mqtt_handler = MH}}.
 
 %% To avoid a compiler warning. Should we actually support something here?
 %%-----------------------------------------------------------------------------
@@ -238,12 +242,30 @@ error(_Socket,Error,Ctx) ->
 
 %%-----------------------------------------------------------------------------
 %% @doc
-%% Handle mqtt messages
+%% Publish an mqtt message
 %%
 %% @end
 %%-----------------------------------------------------------------------------
+-spec publish(Socket::#exo_socket{}, Topic::binary() | string(), Msg::term()) ->
+		     ok.
+
+publish(Socket, Topic, Msg) ->
+    lager:debug("topic ~p, message ~p", [Topic, Msg]),
+    Publish = exo_mqtt:make_packet(#mqtt_header{type = ?MQTT_PUBLISH},
+				   Topic, Msg),
+    exo_socket:send(Socket, Publish),
+    ok.
+
+
+%%-----------------------------------------------------------------------------
+%% Internal functions
+%%-----------------------------------------------------------------------------
 handle_mqtt(_Socket, _Header, {error, Error}, Ctx) ->
     {stop, Error, Ctx};
+handle_mqtt(_Socket, #mqtt_header{qos = QoS}, _Packet, Ctx) 
+  when QoS > 1 ->
+    lager:warning("unhandled qos ~p in ~p", [QoS, Ctx]),
+    {ok, Ctx};
 handle_mqtt(Socket, Header=#mqtt_header{type = ?MQTT_CONNECT}, 
 	    Packet, Ctx) ->
     lager:debug("connect ~p", [Packet]),
@@ -291,6 +313,7 @@ handle_mqtt(_Socket, #mqtt_header{type = _Type}, _Packet, Ctx) ->
     lager:debug("unexpected ~p: ~p in ~p", [_Type,_Packet, Ctx]),
     {ok, Ctx}.
 
+%%-----------------------------------------------------------------------------
 handle_connect(Socket, 
 	       Header=#mqtt_header{duplicate = Duplicate, 
 				   qos = QoS, retain = Retain}, 
@@ -321,23 +344,41 @@ handle_connect(Socket,
 	    {ok, Ctx}
     end.
 
-do_connect(Socket, Header, User, Pass, Ctx) ->
-    %% Verify user !!!
-    case to_handler(Socket, {connect, User, Pass}, Ctx) of
-	{ok, NewCtx} ->
+do_connect(Socket, Header, User, Pass, Ctx=#ctx {access = Access}) ->
+    lager:debug("access ~p", [Access]),
+    case exo_lib:handle_access(Access, Socket, 
+			       {?MODULE, handle_creds, [User, Pass]}) of
+	ok ->
+	    case to_handler(Socket, {connect, User, Pass}, Ctx) of
+		{ok, NewCtx} ->
+		    send_response(Socket, Header, ?MQTT_CONNACK, 
+				  {0, ?MQTT_CONNACK_ACCEPT}, <<>>),
+		    {ok, NewCtx#ctx {state = connected}};
+		_Other ->
+		    lager:warning("handler connect result ~p in ctx ~p",  
+				  [_Other, Ctx]),
+		    {ok, Ctx}
+		end;
+	{error, unauthorised} ->
 	    send_response(Socket, Header, ?MQTT_CONNACK, 
-			  {0, ?MQTT_CONNACK_ACCEPT}, <<>>),
-	    {ok, NewCtx#ctx {state = connected}};
-	_Other ->
-	    lager:warning("handler connect result ~p in ctx ~p",  
-			  [_Other, Ctx]),
-	    {ok, Ctx}
+			  {0, ?MQTT_CONNACK_CREDENTIALS}, <<>>),
+		    {ok, Ctx}
     end.
+
+handle_creds([], _User, _Pass) -> 
+    {error, unauthorised};
+handle_creds([{basic, _Path, User, Pass, _Realm} = _Cred | _Rest], User,  Pass) ->
+    lager:debug("match ~p", [_Cred]),
+    ok;
+handle_creds([_Cred | Rest], User, Pass) ->
+    lager:debug("no match ~p", [_Cred]),
+    handle_creds(Rest, User, Pass).
 	   
 handle_disconnect(Socket, _Header, _Packet, Ctx) ->
     to_handler(Socket, disconnect, Ctx),
     {stop, normal, Ctx#ctx {state = disconnected}}.
 
+%%-----------------------------------------------------------------------------
 handle_subscribe(Socket, Header, Packet, Ctx) ->
     lager:debug("subscribe ~p\n", [Packet]),
     case parse_packet(Packet) of
@@ -364,6 +405,7 @@ do_subscribe(Socket, Header, Topics, PacketId,
 	    {ok, Ctx}
     end.
 
+%%-----------------------------------------------------------------------------
 handle_unsubscribe(Socket, Header, Packet, Ctx) ->
     case parse_packet(Packet) of
 	{PacketId, Rest} ->
@@ -388,24 +430,33 @@ do_unsubscribe(Socket, Header, Topics, PacketId,
 	    {ok, Ctx}
     end.
 
-handle_publish(Socket, Header, 
+%%-----------------------------------------------------------------------------
+handle_publish(Socket, Header=#mqtt_header{qos = QoS}, 
 	       _Packet=#mqtt_packet{length = L, bin = Bin}, Ctx) ->
     case Bin of
 	<<FrameBin:L/binary, Rest/binary>> ->
             {Topic, Rest1} = parse_field(FrameBin, 1),
-	    do_publish(Socket, Header, Topic, Ctx);
+	    {PacketId, _Payload} = 
+		if QoS =:= 0 -> 
+			{undefined, Rest1};
+		   true -> 
+			<<Id:16/big, Rest2/binary>> = Rest1,
+			{Id, Rest2}
+		end,
+	    do_publish(Socket, Header, PacketId, Topic, Ctx);
 	_ ->
 	    lager:warning("faulty message in ~p", [Ctx]),
 	    {ok, Ctx} %% or stop ??
     end.
 
-do_publish(Socket, Header, Topic, Ctx)->
+
+do_publish(Socket, Header, PacketId, Topic, Ctx)->
     case to_handler(Socket, {publish, Topic}, Ctx) of
 	{ok, NewCtx} ->
-	    send_response(Socket, Header, ?MQTT_PUBACK, 0, <<>>),
+	    send_response(Socket, Header, ?MQTT_PUBACK, PacketId, <<>>),
 	    {ok, NewCtx};
 	{{ok, {ResponseTopic, Data}}, NewCtx} ->
-	    send_response(Socket, Header, ?MQTT_PUBACK, 0, <<>>),
+	    send_response(Socket, Header, ?MQTT_PUBACK, PacketId, <<>>),
 	    publish(Socket, ResponseTopic, Data, Ctx),
 	    {ok, NewCtx};
 	_Other ->
@@ -414,6 +465,7 @@ do_publish(Socket, Header, Topic, Ctx)->
 	    {ok, Ctx}
     end.
 
+%%-----------------------------------------------------------------------------
 handle_info(Socket, Info, Ctx) ->
     case to_handler(Socket, {info, Info}, Ctx) of
 	{ok, NewCtx} ->
@@ -424,6 +476,7 @@ handle_info(Socket, Info, Ctx) ->
     end.
    
 
+%%-----------------------------------------------------------------------------
 to_handler(Socket, Data, Ctx=#ctx {mqtt_handler = MH, handler_ctx = Hctx}) ->
     %% Send to handler
     {M, F, As} = mqtt_handler(MH, [Socket, Data, Hctx]),
@@ -446,6 +499,7 @@ to_handler(Socket, Data, Ctx=#ctx {mqtt_handler = MH, handler_ctx = Hctx}) ->
 	    {ok, Ctx} %% or stop ??
     end.
  
+%%-----------------------------------------------------------------------------
 publish(Socket, Topic, Data, #ctx {topics = Topics}) ->
     case lists:member(Topic, Topics) of
 	true -> 
@@ -454,19 +508,19 @@ publish(Socket, Topic, Data, #ctx {topics = Topics}) ->
 	    lager:warning("not publishing unsubscribed topic ~p",[Topic])
     end.
   
-publish(Socket, Topic, Msg) ->
-    lager:debug("topic ~p, message ~p", [Topic, Msg]),
-    Publish = exo_mqtt:make_packet(#mqtt_header{type = ?MQTT_PUBLISH},
-				   Topic, Msg),
-    exo_socket:send(Socket, Publish),
-    ok.
-
+%%-----------------------------------------------------------------------------
+send_response(_Socket, _Header, _Type, undefined, _PayLoad) ->
+    %% no response required
+    ok;
 send_response(Socket, Header, Type, PacketId, PayLoad) ->
     Response = exo_mqtt:make_packet(Header#mqtt_header{type = Type},
 				    PacketId, PayLoad), 
     exo_socket:send(Socket, Response).
    
 
+%%-----------------------------------------------------------------------------
+%% Support functions
+%%-----------------------------------------------------------------------------
 %% @private
 mqtt_handler(undefined, Args) ->
     {?MODULE, handle_mqtt, Args};

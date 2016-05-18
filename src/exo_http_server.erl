@@ -19,6 +19,8 @@
 
 -behaviour(exo_socket_server).
 
+-include("exo.hrl").
+
 %% exo_socket_server callbacks
 -export([init/2,
 	 data/3,
@@ -32,22 +34,6 @@
 
 -define(Q, $\").
 
--type path() :: string().
--type user() :: binary().
--type password() :: binary().
--type realm() :: string().
--type ip_address() :: {integer(),integer(),integer(),integer()} |
-		      {integer(),integer(),integer(),integer(),integer(),integer()}.
--type cred() :: {basic,path(),user(),password(),realm()} |
-		{digest,path(),user(),password(),realm()}. %% Old type
--type guard() :: ip_address() | 
-		 {ip_address(), integer()} |
-		 afunix |
-		 http |
-		 https.
--type action() :: accept | reject | {accept , list(cred())}.
--type access() :: cred() | {guard(), action()}.
-
 -record(state,
 	{
 	  request,
@@ -58,15 +44,21 @@
 	  request_handler
 	}).
 
-%% Configurable start
+%% configurable start
 -export([start/2,
 	 start_link/2,
 	 stop/1]).
+
+%% http specific auth-handling
+-export([handle_creds/5]).
+
+
+%% send on socket
 -export([response/5,
 	 response/6]).
 -export([response_r/6]).  %% use this one
 
-%% For testing
+%% for testing
 -export([test/0, test/1]).
 -export([handle_http_request/3]).
 
@@ -218,7 +210,7 @@ data(Socket, Data, State) ->
 		  {ok, NewState::#state{}} |
 		  {stop, {error, Reason::term()}, NewState::#state{}}.
 
-info(Socket, Info, State) ->
+info(_Socket, Info, State) ->
     lager:debug("exo_http_server:~w: info = ~w\n", [self(),Info]),
     {ok,State}.
 
@@ -293,94 +285,12 @@ handle_auth(_Socket, _Request, _Body, State=#state {access = []})
     ok;
 handle_auth(Socket, Request, Body, State=#state {access = Access})  
   when not State#state.authorized ->
-    handle_access(Access, Socket, Request, Body, State).
-
-handle_access([], _Socket, _Request, _Body, _State) ->
-    %% No access found
-    {error, unauthorised};
-handle_access([{Guard, Action} | Rest], Socket, Request, Body, State) ->
-    case match_access(Guard, Socket, Request) of
-	true -> do(Action, Socket, Request, Body, State);
-	false -> handle_access(Rest, Socket, Request, Body, State)
-    end;
-handle_access([[{Tag, Path, User, Pass, Realm}| _T] = Creds | Rest], 
-	      Socket, Request, Body, State) 
-  when (Tag =:= basic orelse Tag =:= digest) andalso
-       is_list(Path) andalso is_binary(User) andalso 
-       is_binary(Pass) andalso is_list(Realm) ->
-    %% Is this format possible ???
-    case handle_creds(Socket, Request, Body, Creds, State) of
-	ok -> ok;
-	_ -> handle_access(Rest, Socket, Request, Body, State)
-    end;
-handle_access([{Tag, Path, User, Pass, Realm}| _T] = Creds, 
-	      Socket, Request, Body, State) 
-  when (Tag =:= basic orelse Tag =:= digest) andalso
-       is_list(Path) andalso is_binary(User) andalso 
-       is_binary(Pass) andalso is_list(Realm) ->
-    %% Old way
-    handle_creds(Socket, Request, Body, Creds, State).
-	    
-do(accept, _Socket, _Request, _Body, _State) -> ok;
-do(reject, _Socket, _Request, _Body, _State) -> {error, unauthorised};
-do({accept, AccessList}, Socket, Request, Body, State) ->
-    handle_creds(Socket, Request, Body, AccessList, State).
-    
-match_access({any, GuardList}, Socket, Request) ->
-    lists:any(fun(Guard) -> match_access(Guard, Socket, Request) end, 
-	      GuardList);
-match_access({all, GuardList}, Socket, Request) ->
-    lists:all(fun(Guard) -> match_access(Guard, Socket, Request) end, 
-	      GuardList);
-match_access(afunix, #exo_socket {mdata = afunix}, _Request) ->
-    true;
-match_access(afunix, _Socket, _Request) ->
-    false;
-match_access(http, Socket, _Request) ->
-    %%% ???
-    not exo_socket:is_ssl(Socket);
-match_access(https, Socket, _Request) ->
-    %%% ???
-    exo_socket:is_ssl(Socket);
-match_access({Ip, Port}, Socket, _R) ->
-    case exo_socket:peername(Socket) of
-	{ok, {PeerIP, PeerPort}} ->
-	    ((Port =:= '*') orelse (Port =:= PeerPort)) andalso
-		match_ip(Ip, PeerIP);
-	_ -> false
-    end;
-match_access(Ip, Socket, _R) ->
-    case exo_socket:peername(Socket) of
-	{ok, {PeerIP, _Port}} -> 
-	    match_ip(Ip, PeerIP);
-	_ -> false
-    end.
-
-match_ip({Pa,Pb,Pc,Pd}, {A,B,C,D}) ->
-    if ((Pa =:= '*') orelse (Pa =:= A)) andalso
-       ((Pb =:= '*') orelse (Pb =:= B)) andalso
-       ((Pc =:= '*') orelse (Pc =:= C)) andalso
-       ((Pd =:= '*') orelse (Pd =:= D)) ->
-	    true;
-       true -> false
-    end;
-match_ip({Pa,Pb,Pc,Pd,Pe,Pf,Pg,Ph}, {A,B,C,D,E,F,G,H}) ->
-    if ((Pa =:= '*') orelse (Pa =:= A)) andalso
-       ((Pb =:= '*') orelse (Pb =:= B)) andalso
-       ((Pc =:= '*') orelse (Pc =:= C)) andalso
-       ((Pd =:= '*') orelse (Pd =:= D)) andalso
-       ((Pe =:= '*') orelse (Pe =:= E)) andalso
-       ((Pf =:= '*') orelse (Pf =:= F)) andalso
-       ((Pg =:= '*') orelse (Pg =:= G)) andalso
-       ((Ph =:= '*') orelse (Ph =:= H)) ->
-	    true;
-       true -> false
-    end;
-match_ip(_, _) ->
-    false.
+    exo_lib:handle_access(Access, Socket,  
+			  {?MODULE, handle_creds, 
+			   [Socket, Request, Body, State]}).
 
 
-handle_creds(Socket, Request, Body, Creds, State) ->
+handle_creds(Creds, Socket, Request, Body, State) ->
     Header = Request#http_request.headers,
     Autorization = get_authorization(Header#http_chdr.authorization),
     lager:debug("authorization = ~p", [Autorization]),

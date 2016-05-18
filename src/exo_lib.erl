@@ -25,12 +25,18 @@
 %%-----------------------------------------------------------------------------
 -module(exo_lib).
 
+-include("exo.hrl").
+-include("exo_socket.hrl").
+
 -export([split_options/2]).
 -export([validate_access/1]).
+-export([handle_access/3]).
+
 %%-----------------------------------------------------------------------------
 %% @doc
 %% Split a list of Options.
 %% Returns one list with the options found in Keys and one list with the rest.
+%% @end
 %%-----------------------------------------------------------------------------
 -spec split_options(Keys::list(term()), 
 		    List::list({Key::term(), Value::term()})) ->
@@ -52,7 +58,8 @@ split_options_([], L, Acc) ->
 
 %%-----------------------------------------------------------------------------
 %% @doc
-%% Verifies that the specified access is valid.
+%% Verifies that the specified access requirement is valid.
+%% @end
 %%-----------------------------------------------------------------------------
 -spec validate_access(Access::list(term())) ->
 			     ok |
@@ -144,3 +151,114 @@ validate_action({accept, AccessList} = A)->
 	    lager:error("Illegal access ~p", [A]),
 	    {error, invalid_access}
     end.
+
+%%-----------------------------------------------------------------------------
+%% @doc
+%% Verifies the given access agains the specified.
+%% @end
+%%-----------------------------------------------------------------------------
+-spec handle_access(Access::list(access()), 
+		    Socket::#exo_socket{}, 
+		    CredCallback::{atom(), atom(), list()}) ->
+			   ok |
+			   {error, unauthorised} |
+			   term(). %% From CredCallback
+
+handle_access([], _Socket, _CredCallback) ->
+    %% No access found
+    {error, unauthorised};
+handle_access([{Guard, Action} = _Access | Rest], Socket, CredCallback) ->
+    lager:debug("checking ~p", [_Access]),
+    case match_access(Guard, Socket) of
+	true -> do(Action, CredCallback);
+	false -> handle_access(Rest, Socket, CredCallback)
+    end;
+handle_access([[{Tag, Path, User, Pass, Realm}| _T] = Creds | Rest], 
+	      Socket, CredCallback = {M, F, Args}) 
+  when (Tag =:= basic orelse Tag =:= digest) andalso
+       is_list(Path) andalso is_binary(User) andalso 
+       is_binary(Pass) andalso is_list(Realm) ->
+    lager:debug("checking ~p", [Creds]),
+    %% Is this format possible ???
+    case apply(M, F, [Creds | Args]) of
+	ok -> ok;
+	_ -> handle_access(Rest, Socket, CredCallback)
+    end;
+handle_access([{Tag, Path, User, Pass, Realm}| _T] = Creds, 
+	      _Socket, _CredCallback = {M, F, Args}) 
+  when (Tag =:= basic orelse Tag =:= digest) andalso
+       is_list(Path) andalso is_binary(User) andalso 
+       is_binary(Pass) andalso is_list(Realm) ->
+    %% Old way
+    lager:debug("checking ~p", [Creds]),
+    apply(M, F, [Creds | Args]).
+	    
+do(accept, _CredCallback) -> ok;
+do(reject, _CredCallback) -> {error, unauthorised};
+do({accept, AccessList}, _CredCallback = {M, F, Args}) ->
+    apply(M, F, [AccessList | Args]).
+    
+match_access({any, GuardList}, Socket) ->
+    lists:any(fun(Guard) -> match_access(Guard, Socket) end, 
+	      GuardList);
+match_access({all, GuardList}, Socket) ->
+    lists:all(fun(Guard) -> match_access(Guard, Socket) end, 
+	      GuardList);
+match_access(afunix, #exo_socket {mdata = afunix}) ->
+    lager:debug("afunix true", []),
+    true;
+match_access(afunix, _Socket) ->
+    lager:debug("afunix false", []),
+    false;
+match_access(ssl, #exo_socket {mdata = ssl, mctl = ssl}) ->
+    lager:debug("ssl true", []),
+    true;
+match_access(http, Socket=#exo_socket {mdata = gen_tcp, mctl = inet}) ->
+    lager:debug("http true ??", []),
+    lager:debug("socket ~p", [Socket]),
+    %%% ???
+    not exo_socket:is_ssl(Socket);
+match_access(https, Socket=#exo_socket {mdata = ssl, mctl = ssl}) ->
+    lager:debug("https true ??", []),
+    lager:debug("socket ~p", [Socket]),
+    %%% ???
+    true;
+match_access({Ip, Port} = _Peer, Socket) ->
+    lager:debug("checking ~p", [_Peer]),
+    case exo_socket:peername(Socket) of
+	{ok, {PeerIP, PeerPort}} ->
+	    ((Port =:= '*') orelse (Port =:= PeerPort)) andalso
+		match_ip(Ip, PeerIP);
+	_ -> false
+    end;
+match_access(Ip, Socket) ->
+    lager:debug("checking ~p", [Ip]),
+    case exo_socket:peername(Socket) of
+	{ok, {PeerIP, _Port}} -> 
+	    match_ip(Ip, PeerIP);
+	_ -> false
+    end.
+
+match_ip({Pa,Pb,Pc,Pd}, {A,B,C,D}) ->
+    if ((Pa =:= '*') orelse (Pa =:= A)) andalso
+       ((Pb =:= '*') orelse (Pb =:= B)) andalso
+       ((Pc =:= '*') orelse (Pc =:= C)) andalso
+       ((Pd =:= '*') orelse (Pd =:= D)) ->
+	    true;
+       true -> false
+    end;
+match_ip({Pa,Pb,Pc,Pd,Pe,Pf,Pg,Ph}, {A,B,C,D,E,F,G,H}) ->
+    if ((Pa =:= '*') orelse (Pa =:= A)) andalso
+       ((Pb =:= '*') orelse (Pb =:= B)) andalso
+       ((Pc =:= '*') orelse (Pc =:= C)) andalso
+       ((Pd =:= '*') orelse (Pd =:= D)) andalso
+       ((Pe =:= '*') orelse (Pe =:= E)) andalso
+       ((Pf =:= '*') orelse (Pf =:= F)) andalso
+       ((Pg =:= '*') orelse (Pg =:= G)) andalso
+       ((Ph =:= '*') orelse (Ph =:= H)) ->
+	    true;
+       true -> false
+    end;
+match_ip(_, _) ->
+    false.
+

@@ -31,6 +31,15 @@
 -export([parse_topics/2]).
 -export([parse_field/1]).
 
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Make a binary mqtt packet.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
+-spec make_packet(Header::#mqtt_header{}, Data::term(), PayLoad::term()) ->
+			 Packet::binary().
+
 make_packet(Header=#mqtt_header{type = Type}, Data, PayLoad) ->
     pack(Header, pack_data(Type, Data), pack_payload(Type, PayLoad)).
 
@@ -51,7 +60,7 @@ pack_data(?MQTT_PUBLISH, Topic) ->
     pack_field(Topic);
 pack_data(?MQTT_PINGRESP, <<>>) ->
     <<>>;
-pack_data(_Type, Id) when is_integer(Id)->
+pack_data(_Type, Id) when is_integer(Id) ->
     <<Id:16/big>>.
 
 pack_payload(_Type, <<>>) ->
@@ -68,6 +77,12 @@ pack_length(N) when N =< ?MQTT_LOWBITS ->
 pack_length(N) ->
     <<1:1, (N rem ?MQTT_HIGHBIT):7, (pack_length(N div ?MQTT_HIGHBIT))/binary>>.
 
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Retreive topics from subscibe/unsubscribe message.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
 -spec parse_topics(MsgType::?MQTT_SUBSCRIBE | ?MQTT_UNSUBSCRIBE,
 		   Bin::binary()) ->
 			  list(term()).
@@ -85,6 +100,12 @@ parse_topics(?MQTT_UNSUBSCRIBE = Sub, Bin, Topics) ->
     parse_topics(Sub, Rest, [Name | Topics]).
 
 
+%%-----------------------------------------------------------------------------
+%% @doc
+%%  Parse a data field from an mqtt binary.
+%%
+%% @end
+%%-----------------------------------------------------------------------------
 -spec parse_field(Bin::binary()) -> 
 			 {String::binary(), Rest::binary()}.
 
