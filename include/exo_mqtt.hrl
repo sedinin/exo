@@ -26,6 +26,9 @@
 -ifndef(_EXO_MQTT_HRL_).
 -define(_EXO_MQTT_HRL_, true).
 
+-define(MQTT, <<"MQTT">>).
+-define(MQTT_VERSION, 16#04).
+
 %%--------------------------------------------------------------------
 %% MQTT Packet types
 %%--------------------------------------------------------------------
@@ -74,10 +77,6 @@
 
 -record(mqtt_packet,
 	{length = 0 ::integer(),
-	 bin = <<>> ::binary()}).
-
--record(mqtt_message,
-	{packet_id = 0 ::integer(),
 	 bin = <<>> ::binary()}).
 
 -endif.

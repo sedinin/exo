@@ -145,10 +145,14 @@ mod_reply({send, Bin, MSt}, From, State) ->
 mod_reply({send, Bin, MSt, Timeout}, From, State) ->
     State1 = send_(Bin, From, State#state{state = MSt}),
     ret({noreply, State1, Timeout});
-mod_reply({stop, Reason, Reply, _MSt}, _From, State) ->
+mod_reply({stop, Reason, MSt}, _From, State) ->
     %% Terminating
     lager:debug("stopping ~p with reason ~p", [self(), Reason]),
-    {stop, Reason, Reply, State}.
+    {stop, Reason, State#state{state = MSt}};
+mod_reply({stop, Reason, Reply, MSt}, _From, State) ->
+    %% Terminating
+    lager:debug("stopping ~p with reason ~p", [self(), Reason]),
+    {stop, Reason, Reply, State#state{state = MSt}}.
 
 send_(Bin, From, #state{socket = S, pending = P} = State) ->
     P1 = if P == [] ->
@@ -285,8 +289,7 @@ handle_info(Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
-    exo_socket:close(State#state.socket),
-    ok.
+    exo_socket:close(State#state.socket).
 
 %%--------------------------------------------------------------------
 %% @private
