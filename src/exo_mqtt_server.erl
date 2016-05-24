@@ -393,11 +393,14 @@ session(_Clean, Client, Ctx) -> Ctx#ctx {topics = [], client = Client}.
 
 keep_alive(Ctx=#ctx {keep_alive_timer = Timer}) 
   when Timer =/= undefined ->
+    lager:debug("cancel keep alive timer", []),
     erlang:cancel_timer(Timer),
     keep_alive(Ctx#ctx {keep_alive_timer = undefined});
 keep_alive(Ctx=#ctx {keep_alive = 0}) ->
+    lager:debug("no keep alive timer", []),
     Ctx;
 keep_alive(Ctx=#ctx {keep_alive = KeepAlive, keep_alive_timer = undefined}) ->
+    lager:debug("start keep alive timer", []),
     T = erlang:start_timer((KeepAlive + 1) * 1000, self(), keep_alive), 
     Ctx#ctx{keep_alive_timer = T}.
     
@@ -498,8 +501,8 @@ handle_publish(Socket, Header=#mqtt_header{qos = 0},
 	       _Packet=#mqtt_packet{length = L, bin = Bin}, Ctx) ->
     case Bin of
 	<<FrameBin:L/binary, _Rest/binary>> ->
-            {Topic, _Rest1} = parse_field(FrameBin, 1),
-	    do_publish(Socket, Header, 0, Topic, Ctx);
+            {Topic, PayLoad} = parse_field(FrameBin, 1),
+	    do_publish(Socket, Header, 0, Topic, PayLoad, Ctx);
 	_ ->
 	    lager:warning("faulty message in ~p", [Ctx]),
 	    {ok, Ctx} %% or stop ??
@@ -509,21 +512,20 @@ handle_publish(Socket, Header,
     case Bin of
 	<<FrameBin:L/binary, _Rest/binary>> ->
             {Topic, Rest1} = parse_field(FrameBin, 1),
-	    <<PacketId:16/big, _Rest2/binary>> = Rest1,
-	    do_publish(Socket, Header, PacketId, Topic, Ctx);
+	    <<PacketId:16/big, PayLoad/binary>> = Rest1,
+	    do_publish(Socket, Header, PacketId, Topic, PayLoad, Ctx);
 	_ ->
 	    lager:warning("faulty message in ~p", [Ctx]),
 	    {ok, Ctx} %% or stop ??
     end.
 
 
-do_publish(Socket, Header, PacketId, Topic, Ctx)->
-    case to_handler(Socket, {publish, Topic}, Ctx) of
+do_publish(Socket, Header, PacketId, Topic, PayLoad, Ctx)->
+    send_response(Socket, Header, ?MQTT_PUBACK, PacketId, <<>>),
+    case to_handler(Socket, {publish, Topic, PayLoad}, Ctx) of
 	{ok, NewCtx} ->
-	    send_response(Socket, Header, ?MQTT_PUBACK, PacketId, <<>>),
 	    {ok, NewCtx};
 	{{ok, {ResponseTopic, Data}}, NewCtx} ->
-	    send_response(Socket, Header, ?MQTT_PUBACK, PacketId, <<>>),
 	    publish(Socket, ResponseTopic, Data, Ctx),
 	    {ok, NewCtx};
 	_Other ->
