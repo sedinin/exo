@@ -528,10 +528,10 @@ do_publish(Socket, Header, PacketId, Topic, PayLoad, Ctx)->
 	{{ok, {ResponseTopic, Data}}, NewCtx} ->
 	    publish(Socket, ResponseTopic, Data, Ctx),
 	    {ok, NewCtx};
-	_Other ->
+	{_Other, NewCtx} ->
 	    lager:warning("handler publish result ~p in ~p",  
-			  [_Other, Ctx]),
-	    {ok, Ctx}
+			  [_Other, NewCtx]),
+	    {ok, NewCtx}
     end.
 
 %%-----------------------------------------------------------------------------
