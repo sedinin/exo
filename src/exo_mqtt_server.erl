@@ -578,7 +578,8 @@ publish(Socket, Topic, Data, #ctx {topics = Topics}) ->
     end.
   
 %%-----------------------------------------------------------------------------
-send_response(_Socket, _Header, _Type, <<>>, _PayLoad) ->
+send_response(_Socket, _Header, Type, <<>>, _PayLoad)
+  when Type =/= ?MQTT_PINGRESP ->
     lager:debug("no ack when packet id undefined"),
     ok;
 send_response(_Socket, _Header=#mqtt_header{qos = 0}, ?MQTT_PUBACK, 
