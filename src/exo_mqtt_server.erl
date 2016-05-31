@@ -401,7 +401,8 @@ keep_alive(Ctx=#ctx {keep_alive = 0}) ->
     Ctx;
 keep_alive(Ctx=#ctx {keep_alive = KeepAlive, keep_alive_timer = undefined}) ->
     lager:debug("start keep alive timer", []),
-    T = erlang:start_timer((KeepAlive + 1) * 1000, self(), keep_alive), 
+    %% keep alive s -> ms, and 1,5 times
+    T = erlang:start_timer((KeepAlive) * 1500 , self(), keep_alive), 
     Ctx#ctx{keep_alive_timer = T}.
     
 do_connect(Socket, Header, User, Pass, Ctx=#ctx {access = Access}) ->
