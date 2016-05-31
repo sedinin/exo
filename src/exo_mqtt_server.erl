@@ -401,8 +401,13 @@ keep_alive(Ctx=#ctx {keep_alive = 0}) ->
     Ctx;
 keep_alive(Ctx=#ctx {keep_alive = KeepAlive, keep_alive_timer = undefined}) ->
     lager:debug("start keep alive timer", []),
-    %% keep alive s -> ms, and 1,5 times
-    T = erlang:start_timer((KeepAlive) * 1500 , self(), keep_alive), 
+    %% According to the spec timeout should be at 1,5 * KeepAlive,
+    %% However, when testig with eqmttc we have seen that it can delay 
+    %% pinging to almost 2 * KeepAlive so we adjust to that.
+    %% Also adding a margin of 5 secs.
+    TimeOut = (KeepAlive * 2) + 5,
+    %% keepalive s -> ms
+    T = erlang:start_timer(TimeOut * 1000 , self(), keep_alive), 
     Ctx#ctx{keep_alive_timer = T}.
     
 do_connect(Socket, Header, User, Pass, Ctx=#ctx {access = Access}) ->
