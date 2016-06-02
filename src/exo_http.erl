@@ -56,8 +56,9 @@
 -export([tokens/1]).
 -export([get_authenticate/1]).
 -export([scan_tokens/1]).
--export([parse_date/1, format_date/1]).
--export([format_current_date/0]).
+-export([parse_date/1]).
+-export([parse_accept/1]).
+-export([accept_media/1]).
 
 -export([set_chdr/3,
 	 set_shdr/3]).
@@ -66,6 +67,9 @@
 -export([format_response/1, format_response/3,
 	 format_request/1, format_request/2, format_request/4,
 	 format_query/1,
+	 format_current_date/0,
+	 format_timestamp/1,
+	 format_date/1,
 	 format_headers/1,
 	 format_hdr/1,
 	 fmt_chdr/1,
@@ -78,13 +82,11 @@
 	 make_basic_request/2,
 	 make_digest_request/2
 	]).
+
 -export([url_decode/1,
 	 parse_query/1]).
 -export([parse_alt_query/1, parse_alt_seq/1, parse_alt_seq/2, parse_kv/1]).
 -export([make_digest_response/3]).
-
-
--import(lists, [reverse/1]).
 
 -define(Q, $\").
 %%
@@ -256,8 +258,8 @@ wpost_multi_body(Req, Data) ->
 
 
 unquote([$" | Str]) ->
-    case reverse(Str) of
-	[$" | RStr] -> reverse(RStr);
+    case lists:reverse(Str) of
+	[$" | RStr] -> lists:reverse(RStr);
 	_ -> Str
     end;
 unquote(Str) -> Str.
@@ -658,7 +660,7 @@ recv_body_eof1(Socket,Fun,Acc,Timeout) ->
 	    Acc1 = Fun(Bin, Acc),
 	    recv_body_eof1(Socket,Fun,Acc1,Timeout);
 	{error, closed} ->
-	    {ok, list_to_binary(reverse(Acc))};
+	    {ok, list_to_binary(lists:reverse(Acc))};
 	Error ->
 	    Error
     end.
@@ -679,7 +681,7 @@ recv_body_data(Socket, Len, Fun, Acc, Timeout) ->
 	{ok, Bin} ->
 	    Acc1 = Fun(Bin, Acc),
 	    exo_socket:setopts(Socket, [{packet,http}]),
-	    {ok,iolist_to_binary(reverse(Acc1))};
+	    {ok,iolist_to_binary(lists:reverse(Acc1))};
 	Error ->
 	    Error
     end.
@@ -709,7 +711,7 @@ recv_body_chunk(S, Fun, Acc, Timeout) ->
 			    lager:debug("CHUNK TRAILER: ~p\n", [_TR]),
 			    exo_socket:setopts(S, [{packet,http},
 						   {mode,binary}]),
-			    {ok,list_to_binary(reverse(Acc))};
+			    {ok,list_to_binary(lists:reverse(Acc))};
 			Error -> 
 			    Error
 		    end;
@@ -745,7 +747,7 @@ recv_chunk_trailer(S, Acc, Timeout) ->
 	{ok,{http_header,_,K,_,V}} ->
 	    recv_chunk_trailer(S,[{K,V}|Acc],Timeout);
 	{ok,http_eoh} ->
-	    {ok, reverse(Acc)};
+	    {ok, lists:reverse(Acc)};
 	Error ->
 	    Error
     end.
@@ -767,7 +769,7 @@ recv_hc(S, R, H, Timeout) ->
 	    case Hdr of
 		http_eoh ->
 		    lager:debug("EOH <\n", []),
-		    Other = reverse(H#http_chdr.other),
+		    Other = lists:reverse(H#http_chdr.other),
 		    H1 = H#http_chdr { other = Other },
 		    R1 = R#http_request { headers = H1 },
 		    lager:debug("< ~s~s\n", [format_request(R1,true),
@@ -797,7 +799,7 @@ recv_hs(S, R, H, Timeout) ->
 	    case Hdr of
 		http_eoh ->
 		    lager:debug("EOH <\n", []),
-		    Other = reverse(H#http_shdr.other),
+		    Other = lists:reverse(H#http_shdr.other),
 		    H1 = H#http_shdr { other = Other },
 		    R1 = R#http_response { headers = H1 },
 		    lager:debug("< ~s~s\n", [format_response(R1),
@@ -984,12 +986,55 @@ scan_token([C|Cs],Ds,Acc) -> scan_token(Cs,[C|Ds],Acc);
 scan_token([],Ds,Acc) -> scan_tokens([],[lists:reverse(Ds)|Acc]).
 
 trim(Cs) ->
-    reverse(trim_(reverse(trim_(Cs)))).
+    lists:reverse(trim_(lists:reverse(trim_(Cs)))).
 
 trim_([$\s|Cs]) -> trim_(Cs);
 trim_([$\t|Cs]) -> trim_(Cs);
 trim_(Cs) -> Cs.
 
+%% 
+%% Return Accept q-sorted list given a http request
+%%
+-spec accept_media(#http_request{}) -> [MediaType::string()].
+
+accept_media(Request) ->
+    Accept = (Request#http_request.headers)#http_chdr.accept,
+    lager:debug("accept ~p", [Accept]),
+    case parse_accept(Accept) of
+	undefined -> [];
+	Tokens -> Tokens
+    end.
+	    
+%% fixme: parse and return other media paramters, do proper handling of q
+parse_accept(String) ->
+    parse_accept(scan_accept(String), []).
+
+parse_accept([ [Media] | Types ], Acc) ->
+    parse_accept(Types, [{Media, 1.0} | Acc]);
+parse_accept([ [Media,"q="++QVal|_] | Types], Acc) ->
+    try to_number(QVal) of
+	Q -> parse_accept(Types, [{Media, Q} | Acc])
+    catch
+	error:_ ->
+	    lager:error("bad q value ~p\n", [QVal]),
+	    parse_accept(Types, [{Media, 0.0} | Acc])
+    end;
+parse_accept([ [Media|_] | Types], Acc) -> %% fixme
+    parse_accept(Types, [{Media, 1.0} | Acc]);
+parse_accept([], Acc) -> 
+    [M || {M,_} <- lists:reverse(lists:keysort(2, Acc))].
+
+scan_accept(String) ->
+    [[trim(Item) || Item <- string:tokens(MediaRange,";")] || MediaRange <- string:tokens(String, ",")].
+
+to_number(String) ->
+    try list_to_float(String) of
+	F -> F
+    catch
+	error:_ ->
+	    list_to_integer(String)
+    end.
+    
 %%
 %% Encode basic authorization
 %%
@@ -1415,6 +1460,17 @@ dec_time([H1,H2,$:,M1,M2,$:,S1,S2|Cs]) ->
 format_current_date() ->
     format_date(calendar:universal_time()).
 
+format_timestamp(Us) when is_integer(Us), Us >=0  ->
+    SS = Us div 1000000,
+    NowU = Us rem 1000000,
+    NowMs = SS div 1000000,
+    NowS  = SS rem 1000000,
+    format_timestamp({NowMs,NowS,NowU});
+format_timestamp({NowMs,NowS,NowU}) ->
+    {{YYYY,MM,DD},{H,M,S}} = calendar:now_to_datetime({NowMs,NowS,NowU}),
+    io_lib:format("~4..0w-~2..0w-~2..0w ~2..0w:~2..0w:~2..0w.~w",
+		  [YYYY,MM,DD,H,M,S,NowU]).
+    
 %% encode date into rfc1123-date (must be a GMT time!!!)
 format_date({{Y,M,D},{TH,TM,TS}}) ->
     WkDay = case calendar:day_of_the_week({Y,M,D}) of
