@@ -1000,12 +1000,11 @@ trim_(Cs) -> Cs.
 accept_media(Request) ->
     Accept = (Request#http_request.headers)#http_chdr.accept,
     lager:debug("accept ~p", [Accept]),
-    case parse_accept(Accept) of
-	undefined -> [];
-	Tokens -> Tokens
-    end.
+    parse_accept(Accept).
 	    
 %% fixme: parse and return other media paramters, do proper handling of q
+parse_accept(undefined) ->
+    [];
 parse_accept(String) ->
     parse_accept(scan_accept(String), []).
 
