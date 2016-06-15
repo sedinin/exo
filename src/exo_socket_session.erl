@@ -117,39 +117,39 @@ handle_call(Request, From,
     try M:control(Socket, Request, From, MSt) of
 	Result -> 
 	    lager:debug("reply ~p", [Result]),
-	    mod_reply(Result, From, State)
+	    control_reply(Result, From, State)
     catch
 	error:_Error -> 
 	    lager:debug("catch reason  ~p", [_Error]),
 	    ret({reply, {error, unknown_call}, State})
     end.
 
-mod_reply({data, Data, MSt}, _, State) ->
+control_reply({data, Data, MSt}, _, State) ->
     %% This case is when data has come from an external source
     %% that needs an additonal ok reply
     case handle_socket_data(Data, data, State#state{state = MSt}) of
 	{noreply, NewState} -> {reply, ok, NewState};
 	Other -> Other
     end;
-mod_reply({ignore, MSt}, _, State) ->
+control_reply({ignore, MSt}, _, State) ->
     ret({noreply, State#state{state = MSt}});
-mod_reply({ignore, MSt, Timeout}, _, State) ->
+control_reply({ignore, MSt, Timeout}, _, State) ->
     ret({noreply, State#state{state = MSt}, Timeout});
-mod_reply({reply, Reply, MSt}, _, State) ->
+control_reply({reply, Reply, MSt}, _, State) ->
     ret({reply, Reply, State#state{state = MSt}});
-mod_reply({reply, Reply, MSt, Timeout}, _, State) ->
+control_reply({reply, Reply, MSt, Timeout}, _, State) ->
     ret({reply, Reply, State#state{state = MSt}, Timeout});
-mod_reply({send, Bin, MSt}, From, State) ->
+control_reply({send, Bin, MSt}, From, State) ->
     State1 = send_(Bin, From, State#state{state = MSt}),
     ret({noreply, State1});
-mod_reply({send, Bin, MSt, Timeout}, From, State) ->
+control_reply({send, Bin, MSt, Timeout}, From, State) ->
     State1 = send_(Bin, From, State#state{state = MSt}),
     ret({noreply, State1, Timeout});
-mod_reply({stop, Reason, MSt}, _From, State) ->
+control_reply({stop, Reason, MSt}, _From, State) ->
     %% Terminating
     lager:debug("stopping ~p with reason ~p", [self(), Reason]),
     {stop, Reason, State#state{state = MSt}};
-mod_reply({stop, Reason, Reply, MSt}, _From, State) ->
+control_reply({stop, Reason, Reply, MSt}, _From, State) ->
     %% Terminating
     lager:debug("stopping ~p with reason ~p", [self(), Reason]),
     {stop, Reason, Reply, State#state{state = MSt}}.
@@ -227,15 +227,16 @@ handle_info(timeout, State) ->
     exo_socket:shutdown(State#state.socket, write),
     lager:debug("idle_timeout~p~n", [self()]),
     {stop, normal, State};
-handle_info({Tag,Socket,Data0}, State) when 
+handle_info({Tag,Socket,Data0},State=#state {socket = S}) when 
       %% FIXME: put socket tag in State for correct matching
       (Tag =:= tcp orelse Tag =:= ssl orelse Tag =:= http), 
-      Socket =:= (State#state.socket)#exo_socket.socket ->
+      Socket =:= S#exo_socket.socket ->
     lager:debug("got data ~p\n", [{Tag,Socket,Data0}]),
-    try exo_socket:auth_incoming(State#state.socket, Data0) of
+    try exo_socket:auth_incoming(S, Data0) of
 	<<"reuse%", Rest/binary>> ->
 	    handle_reuse_data(Rest, State);
 	Data ->
+	    maybe_flow_control(S, use, 1), %% Count down
 	    handle_socket_data(Data, data, State)
     catch
 	error:_ ->
@@ -289,6 +290,7 @@ handle_info(Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
+    lager:debug("terminating, reason ~p.", [_Reason]),
     exo_socket:close(State#state.socket).
 
 %%--------------------------------------------------------------------
@@ -300,6 +302,7 @@ terminate(_Reason, State) ->
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
+    lager:debug("code change, old version ~p.", [_OldVsn]),
     {ok, State}.
 
 %%%===================================================================
@@ -344,21 +347,23 @@ handle_reuse_data(Rest, #state{module = M, state = MSt} = State) ->
     end,
     ret({noreply, State1}).
 
-handle_socket_data(Data, F, State=#state {module = M, state = CSt0, socket = S}) ->
-    lager:debug("call ~p", [M]),
+handle_socket_data(Data, F, 
+		   State=#state {module = M, state = CSt0, socket = S}) ->
+    lager:debug("call ~p:~p", [M,F]),
     ModResult = apply(M, F, [S,Data,CSt0]),
     lager:debug("result ~p", [ModResult]),
-    maybe_flow_control(S, use, 1), %% Count down
     handle_module_result(ModResult, State).
 
 handle_module_result({ok,CSt1}, State) ->
     TRef = handle_active(State),
     ret({noreply, State#state { state = CSt1, active_timer = TRef }});
 handle_module_result({close, CSt1}, State) ->
+    lager:debug("closing"),
     exo_socket:shutdown(State#state.socket, write),
     ret({noreply, State#state { state = CSt1 }});
 handle_module_result({stop,Reason,CSt1}, State) ->
     %% shutdown here ???
+    lager:debug("stopping"),
     {stop, Reason, State#state { state = CSt1 }};
 handle_module_result({reply, Rep, CSt1}, State) ->
     TRef = handle_active(State),
