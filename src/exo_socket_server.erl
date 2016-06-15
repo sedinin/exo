@@ -416,6 +416,7 @@ handle_info(_Info, State) ->
 %% @end
 %%--------------------------------------------------------------------
 terminate(_Reason, State) ->
+    lager:debug("terminating, reason ~p.", [_Reason]),
     exo_socket:close(State#state.listen),
     ok.
 
@@ -428,6 +429,7 @@ terminate(_Reason, State) ->
 %% @end
 %%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
+    lager:debug("code change, old version ~p.", [_OldVsn]),
     {ok, State}.
 
 %%%===================================================================

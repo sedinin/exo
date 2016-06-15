@@ -414,7 +414,6 @@ handle_body(Socket, Request, Body, State) ->
     lager:debug("calling ~p with -BODY:\n~s\n-END-BODY\n",
 		[RH, Body]),
     {M, F, As} = request_handler(RH, Socket, Request, Body),
-    lager:debug("args converted to ~p", [As]),
     try apply(M, F, As) of
 	ok -> {ok, State};
 	stop -> {stop, normal, State};
