@@ -528,6 +528,7 @@ use_tokens({out, _K} = Key, Tokens) ->
 	    lager:debug("not enough tokens in bucket ~p, ~p.", [Key, Action]),
 	    {action, Action};
 	[] ->
+	    lager:warning("unknown key ~p.", [Key]),
 	    {error, unknown_key}
     end.
 

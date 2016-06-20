@@ -38,5 +38,6 @@ start_link(Args) ->
 
 init(Args) ->
     F = ?CHILD(exo_flow,worker,Args),
-    {ok, { {one_for_all, 5, 10}, [F]} }.
+    R = ?CHILD(exo_resource_srv,worker,Args),
+    {ok, { {one_for_all, 5, 10}, [F, R]} }.
 

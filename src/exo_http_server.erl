@@ -99,7 +99,7 @@ do_start(Start, Port, Options) ->
     lager:debug("exo_http_server: ~w: port ~p, server options ~p",
 	   [Start, Port, Options]),
     {SessionOptions,Options1} = 
-	exo_lib:split_options([request_handler,access,private_key],
+	exo_lib:split_options([request_handler,access,private_key,idle_timeout],
 			      Options),
     Dir = code:priv_dir(exo),
     Access = proplists:get_value(access, Options, []),

@@ -569,12 +569,8 @@ close(#exo_socket { mdata = M, socket = S, transport = T}) ->
     exo_flow:delete(T), %% Delete both incoming and outgoing flow control
     M:close(S).
 
-shutdown(#exo_socket {mdata = M, socket = S, flow = undefined}, How) ->
-    M:shutdown(S, How);
-shutdown(#exo_socket {mdata = M, socket = S, transport = T}, How) ->
-    exo_flow:delete(T), %% Delete both incoming and outgoing flow control
+shutdown(#exo_socket {mdata = M, socket = S}, How) ->
     M:shutdown(S, How).
-
     
 send(#exo_socket {flow = undefined} = X, Data) ->
     send1(X, Data);

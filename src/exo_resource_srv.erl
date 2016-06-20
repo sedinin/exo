@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT -------------------------------------------------------
 %%%
 %%% Copyright (C) 2016, Rogvall Invest AB, <tony@rogvall.se>
@@ -203,9 +204,8 @@ init(Args) ->
 			 {noreply, Ctx::#ctx{}, T::timeout()} |
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
-handle_call(dump, _From, 
-	    Ctx=#ctx {state = State}) ->
-    io:format("Ctx: State = ~p.", [State]),
+handle_call(dump, _From, Ctx) ->
+    io:format("Ctx: ~p.", [Ctx]),
     {reply, ok, Ctx};
 
 handle_call(stop, _From, Ctx) ->
@@ -234,7 +234,7 @@ handle_call(_R, _From, Ctx) ->
 handle_cast({aquire, Ref, _Timeout, Pid} = M, 
 	    Ctx=#ctx {refs = Refs}) ->
     lager:debug("cast ~p.", [M]),
-    NewCtx = case lists:keyfind({Pid, Ref}, Refs) of
+    NewCtx = case lists:keyfind({Pid, Ref}, 1, Refs) of
 		 false -> 
 		     handle_aquire(M, Ctx);
 		 {{Pid, Ref}, _} -> 
@@ -244,13 +244,14 @@ handle_cast({aquire, Ref, _Timeout, Pid} = M,
     {noreply, NewCtx};
 
 handle_cast({release, Ref, Pid} = M, 
-	    Ctx=#ctx {refs = Refs}) ->
+	    Ctx=#ctx {refs = Refs, available = Avail}) ->
     lager:debug("cast ~p.", [M]),
-    NewCtx = case lists:keytake({Pid, Ref}, Refs) of
+    NewCtx = case lists:keytake({Pid, Ref}, 1, Refs) of
 		 false -> 
 		     Ctx;
 		 {value, {{Pid, Ref}, _}, NewRefs} -> 
-		     handle_release(M, Ctx#ctx {refs = NewRefs})
+		     handle_release(M, Ctx#ctx {refs = NewRefs, 
+						available = Avail - 1})
 	     end,
     {noreply, NewCtx};
 
@@ -325,7 +326,7 @@ handle_aquire({aquire, Ref, _Timeout, Pid},
   when Avail > 0 ->
     Pid ! {ok, Ref},
     NewUsers = supervise(Pid, Users),
-    NewRefs = [{Pid, Ref} | Refs],
+    NewRefs = [{{Pid, Ref}, ok} | Refs],
     Ctx#ctx {available = Avail - 1, users = NewUsers, refs = NewRefs};
 handle_aquire({aquire, Ref, Timeout, Pid}, 
 	      Ctx=#ctx {users = Users, waiting = Waiting}) ->
@@ -390,7 +391,7 @@ remove_user(Pid, Ctx=#ctx{waiting = Waiting, refs = Refs}) ->
 
 supervise(Pid, Users) ->
     case lists:keyfind(Pid, 1, Users) of
-	true -> 
+	{Pid, _Mon} -> 
 	    Users;
 	false ->
 	    Mon = erlang:monitor(process, Pid),

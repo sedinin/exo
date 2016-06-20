@@ -1067,6 +1067,7 @@ lookup_param(Key, List) ->
 	Value -> ", "++make_param(Key, Value)
     end.
 
+-spec to_key(BinOrList::binary() | string()) -> string().
 to_key(Bin) when is_binary(Bin) -> binary_to_list(Bin);
 to_key(List) when is_list(List) -> List.
 

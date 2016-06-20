@@ -36,19 +36,19 @@
 -define(SERVER, ?MODULE). 
 
 -record(state, {
-	  module,
-	  args,
-	  socket,
-	  active,
-	  state,
-	  pending = [],
-	  idle_timeout,
-	  active_timer
+	  module::atom(),
+	  args::list(),
+	  socket::exo_socket(),
+	  active::atom() | integer(),
+	  state::term(), %% Module state
+	  pending = []::list(),
+	  idle_timeout = infinity::timeout(),
+	  active_timer:: reference()
 	 }).
 
 -include("exo_socket.hrl").
 
--type exo_socket() :: #exo_socket {}.
+-type exo_socket() :: #exo_socket{}.
 
 %%%===================================================================
 %%% API
@@ -64,9 +64,9 @@
 			{ok, pid()} | ignore | {error, Error::term()}.
 
 start_link(XSocket,Module,Args) ->
-    gen_server:start_link(?MODULE, [XSocket,Module,Args, []], []).
+    gen_server:start_link(?MODULE, [XSocket,Module,Args], []).
 
--spec start(Socket::exo_socket(), Module::atom(), Args::[term()]) ->
+-spec start(XSocket::exo_socket(), Module::atom(), Args::[term()]) ->
 		   {ok, pid()} | ignore | {error, Error::term()}.
 
 start(XSocket, Module, Args) ->
@@ -82,16 +82,18 @@ start(XSocket, Module, Args) ->
 %% @doc
 %% Initializes the server
 %%
-%% @spec init(Args) -> {ok, State} |
-%%                     {ok, State, Timeout} |
-%%                     ignore |
-%%                     {stop, Reason}
 %% @end
 %%--------------------------------------------------------------------
+-type args() :: exo_socket() | atom() | list().
+-spec init([args()]) -> 
+		  {ok, State::#state{}}.
+
 init([XSocket, Module, Args]) ->
     {ok, #state{ socket=XSocket,
 		 module=Module,
 		 args=Args,
+		 idle_timeout = 
+		     proplists:get_value(idle_timeout, Args, infinity),
 		 state=undefined}}.
 
 %%--------------------------------------------------------------------
@@ -107,7 +109,9 @@ init([XSocket, Module, Args]) ->
 		  From::{pid(), Tag::term()}, 
 		  State::#state{}) ->
 			 {reply, Reply::term(), State::#state{}} |
+			 {reply, Reply::term(), State::#state{}, T::timeout()} |
 			 {noreply, State::#state{}} |
+			 {noreply, State::#state{}, T::timeout()} |
 			 {stop, Reason::atom(), Reply::term(), State::#state{}}.
 
 %% No 'local' handle_call
@@ -170,11 +174,14 @@ send_(Bin, From, #state{socket = S, pending = P} = State) ->
 %% @doc
 %% Handling cast messages
 %%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+-spec handle_cast(Msg::term(), 
+		  State::#state{}) ->
+			 {noreply, State::#state{}} |
+			 {noreply, State::#state{}, T::timeout()} |
+			 {stop, Reason::atom(), State::#state{}}.
+
 handle_cast({activate,Active}, State0) ->
     lager:debug("activate~n", []),
     try exo_socket:authenticate(State0#state.socket) of
@@ -218,11 +225,14 @@ handle_cast(_Msg, State) ->
 %% @doc
 %% Handling all non call/cast messages
 %%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+-spec handle_info(Info::term(), 
+		  State::#state{}) ->
+			 {noreply, State::#state{}} |
+			 {noreply, State::#state{}, T::timeout()} |
+			 {stop, Reason::atom(), State::#state{}}.
+
 handle_info(timeout, State) ->
     exo_socket:shutdown(State#state.socket, write),
     lager:debug("idle_timeout~p~n", [self()]),
@@ -268,7 +278,7 @@ handle_info({timeout, Ref, {active, Value}},
     lager:debug("got active_timeout ~p\n", [Value]),
     maybe_flow_control(S, fill),
     exo_socket:setopts(State#state.socket, [{active,Value}]),
-    {noreply, State#state {active_timer = undefined}};
+    ret({noreply, State#state {active_timer = undefined}});
 
 handle_info(Info, State) ->
     lager:debug("Got info: ~p\n", [Info]),
@@ -286,9 +296,11 @@ handle_info(Info, State) ->
 %% necessary cleaning up. When it returns, the gen_server terminates
 %% with Reason. The return value is ignored.
 %%
-%% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
+-spec terminate(Reason::term(), State::#state{}) -> 
+		       no_return().
+
 terminate(_Reason, State) ->
     lager:debug("terminating, reason ~p.", [_Reason]),
     exo_socket:close(State#state.socket).
@@ -301,6 +313,9 @@ terminate(_Reason, State) ->
 %% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
 %% @end
 %%--------------------------------------------------------------------
+-spec code_change(OldVsn::term(), State::#state{}, Extra::term()) -> 
+			 {ok, NewState::#state{}}.
+
 code_change(_OldVsn, State, _Extra) ->
     lager:debug("code change, old version ~p.", [_OldVsn]),
     {ok, State}.
@@ -310,23 +325,15 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 
 ret({noreply, #state{idle_timeout = T} = S}) ->
-    if T==undefined -> {noreply, S};
-       true         -> {noreply, S, T}
-    end;
+    {noreply, S, T};
 ret({reply, R, #state{idle_timeout = T} = S}) ->
-    if T==undefined -> {reply, R, S};
-       true         -> {reply, R, S, T}
-    end;
+    {reply, R, S, T};
 ret({noreply, S, T}) ->
     S1 = S#state{idle_timeout = T},
-    if T==undefined -> {noreply, S1};
-       true         -> {noreply, S1, T}
-    end;
+    {noreply, S1, T};
 ret({reply, R, S, T}) ->
     S1 = S#state{idle_timeout = T},
-    if T==undefined -> {reply, R, S1};
-       true         -> {reply, R, S1, T}
-    end;
+    {reply, R, S1, T};
 ret(R) ->
     R.
 
@@ -352,20 +359,20 @@ handle_socket_data(Data, F,
     lager:debug("call ~p:~p", [M,F]),
     ModResult = apply(M, F, [S,Data,CSt0]),
     lager:debug("result ~p", [ModResult]),
-    handle_module_result(ModResult, State).
+    data_result(ModResult, State).
 
-handle_module_result({ok,CSt1}, State) ->
+data_result({ok,CSt1}, State) ->
     TRef = handle_active(State),
     ret({noreply, State#state { state = CSt1, active_timer = TRef }});
-handle_module_result({close, CSt1}, State) ->
+data_result({close, CSt1}, State) ->
     lager:debug("closing"),
     exo_socket:shutdown(State#state.socket, write),
     ret({noreply, State#state { state = CSt1 }});
-handle_module_result({stop,Reason,CSt1}, State) ->
+data_result({stop,Reason,CSt1}, State) ->
     %% shutdown here ???
     lager:debug("stopping"),
     {stop, Reason, State#state { state = CSt1 }};
-handle_module_result({reply, Rep, CSt1}, State) ->
+data_result({reply, Rep, CSt1}, State) ->
     TRef = handle_active(State),
     case State#state.pending of
 	[{From,_}|Rest] ->

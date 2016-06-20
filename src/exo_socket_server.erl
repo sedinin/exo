@@ -298,42 +298,18 @@ handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, State)
        Ref =:= State#state.ref ->
     lager:debug("<-- ~p~n", [_Msg]),
     Listen = State#state.listen,
+    %% Resource control !!
     NewAccept = exo_socket:async_accept(Listen),
     %% Create the socket_session process
-    Pid =
-	proc_lib:spawn(
-	  fun() ->
-		  receive
-		      controlling ->  %% control sync
-			  case exo_socket:async_socket(Listen, Socket, 
-						       [delay_auth], 
-						       ?EXO_DEFAULT_ACCEPT_TIMEOUT) of
-			      {ok, XSocket} ->
-				  {ok,XSt0} = 
-				      exo_socket_session:init([XSocket,
-							       State#state.module,
-							       State#state.args]),
-				  {noreply, XSt1} =
-				      exo_socket_session:handle_cast(
-					{activate, State#state.active}, XSt0),
-				  gen_server:enter_loop(exo_socket_session, 
-							[], XSt1);
-			      _Error ->
-				  error
-			  end
-		  after 3000 ->
-			  lager:warning("parent did not pass over control"),
-			  error
-		  end
-	  end),
+    Pid = proc_lib:spawn(fun() -> 
+				 create_socket_session(Listen, Socket, State) 
+			 end),
     inet:tcp_controlling_process(Socket, Pid),
+    %% Turn over control to socket session
     Pid ! controlling,
-
     case NewAccept of
-	{ok,Ref1} ->
-	    {noreply, State#state { ref = Ref1 }};
-	{error, Reason} ->
-	    {stop, Reason, State}
+	{ok,Ref1} -> {noreply, State#state { ref = Ref1 }};
+	{error, Reason} -> {stop, Reason, State}
     end;
 
 %% handle {ok,Socket} on bad ref ?
@@ -435,7 +411,37 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+create_socket_session(Listen, Socket, State) ->
+    receive
+	controlling ->  %% control sync
+	    case exo_socket:async_socket(Listen, Socket, 
+					 [delay_auth], 
+					 ?EXO_DEFAULT_ACCEPT_TIMEOUT) of
+		{ok, XSocket} ->
+		    {ok,XState0} = 
+			exo_socket_session:init([XSocket,
+						 State#state.module,
+						 State#state.args]),
+		    activate_session(State, XState0);
+		_Error ->
+		    lager:warning("no socket session, "
+				  "async_socket call failed, reason ~p",
+				  [_Error]),
+		    error
+	    end
+    after 3000 ->
+	    lager:warning("parent did not pass over control"),
+	    error
+    end.
 
+activate_session(State, XState0) ->
+    case exo_socket_session:handle_cast(
+	   {activate, State#state.active}, XState0) of
+	{noreply, XState1, TimeOut} ->
+	    gen_server:enter_loop(exo_socket_session, [], XState1, TimeOut);
+	{noreply, XState1} ->
+	    gen_server:enter_loop(exo_socket_session, [], XState1)
+    end.
 
 start_connector(Host, Port, ConnArgs, Parent,
 		#state{module = M, args = Args, active = Active,
@@ -467,14 +473,11 @@ start_connector(Host, Port, ConnArgs, Parent,
     erlang:monitor(process, Pid),
     Pid.
 
-open_reuse_connector(Host, Port, ConnArgs) ->
-    case ConnArgs of
-	[Protos, Opts, Timeout] ->
-	    exo_socket:connect(
-	      Host, Port, Protos, Opts, Timeout);
-	[Protos, Opts] ->
-	    exo_socket:connect(Host, Port, Protos, Opts)
-    end.
+open_reuse_connector(Host, Port, [Protos, Opts, Timeout]) ->
+    exo_socket:connect(Host, Port, Protos, Opts, Timeout);
+open_reuse_connector(Host, Port, [Protos, Opts]) ->
+    exo_socket:connect(Host, Port, Protos, Opts).
+
 
 send_reuse_message(Host, Port, Args, M, MyPort, XSocket, RUSt) ->
     ReuseOpts = M:reuse_options(Host, Port, Args, RUSt),
