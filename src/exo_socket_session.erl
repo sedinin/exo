@@ -84,7 +84,7 @@ start(XSocket, Module, Args) ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--type args() :: exo_socket() | atom() | list().
+-type args() :: exo_socket() | atom() | term() | list().
 -spec init([args()]) -> 
 		  {ok, State::#state{}}.
 

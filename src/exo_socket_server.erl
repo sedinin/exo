@@ -45,7 +45,8 @@
 	  listen,    %% #exo_socket{}
 	  active,    %% default active mode for socket
 	  socket_reuse = none,  %% 'none' | #reuse{}
-	  ref,       %% prim_inet internal accept ref number
+	  inet_ref,  %% prim_inet internal accept ref number
+	  resource,  %% exo_resource reference
 	  module,    %% session module
 	  args       %% session init args
 	 }).
@@ -191,18 +192,16 @@ init([Port,Protos,Options,Module,SessionOptions] = _X) ->
 	    end,
     case exo_socket:listen(Port,Protos,Options1) of
 	{ok,Listen} ->
-	    case exo_socket:async_accept(Listen) of
-		{ok, Ref} ->
-		    {ok, #state{ listen = Listen, 
-				 active = Active, 
-				 socket_reuse = Reuse,
-				 ref=Ref,
-				 module=Module, 
-				 args=SessionOptions
-			       }};
-		{error, Reason} ->
-		    {stop,Reason}		    
-	    end;
+	    %% Acquire resource for first connection
+	    Resource = make_ref(),
+	    exo_resource_srv:acquire_async(Resource, infinity),
+	    {ok, #state{ listen = Listen, 
+			 active = Active, 
+			 socket_reuse = Reuse,
+			 resource = Resource,
+			 module = Module, 
+			 args = SessionOptions
+		       }};
 	{error,Reason} ->
 	    {stop,Reason}
     end.
@@ -293,35 +292,47 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, State) 
-  when (State#state.listen)#exo_socket.socket =:= LSocket,
-       Ref =:= State#state.ref ->
-    lager:debug("<-- ~p~n", [_Msg]),
-    Listen = State#state.listen,
-    %% Resource control !!
+handle_info({resource, ok, Resource}, 
+	    State=#state {resource = Resource, listen = Listen}) ->
     NewAccept = exo_socket:async_accept(Listen),
     %% Create the socket_session process
+    case NewAccept of
+	{ok, Ref} -> {noreply, State#state {inet_ref = Ref}};
+	{error, Reason} -> {stop, Reason, State}
+    end;
+
+handle_info({resource, error, Reason}, State) ->
+    lager:error("resource acquire failed, reason ~p",[Reason]),
+    {stop, Reason, State};
+
+handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg, 
+	    State=#state {inet_ref = Ref, resource = Resource}) 
+  when (State#state.listen)#exo_socket.socket =:= LSocket ->
+    lager:debug("<-- ~p~n", [_Msg]),
+    Listen = State#state.listen,
     Pid = proc_lib:spawn(fun() -> 
 				 create_socket_session(Listen, Socket, State) 
 			 end),
     inet:tcp_controlling_process(Socket, Pid),
     %% Turn over control to socket session
+    exo_resource_srv:transfer(Resource, Pid),
     Pid ! controlling,
-    case NewAccept of
-	{ok,Ref1} -> {noreply, State#state { ref = Ref1 }};
-	{error, Reason} -> {stop, Reason, State}
-    end;
+    %% Acquire resource for next connection
+    NewResource = make_ref(),
+    exo_resource_srv:acquire_async(NewResource, infinity),
+    {noreply, State#state {resource = NewResource}};
 
 %% handle {ok,Socket} on bad ref ?
-handle_info({inet_async, _LSocket, Ref, {error,Reason}} = _Msg, State) 
-  when Ref =:= State#state.ref ->
+handle_info({inet_async, _LSocket, Ref, {error,Reason}} = _Msg, 
+	    State=#state {inet_ref = Ref}) ->
     lager:debug("~p: ~p~n", [?MODULE, _Msg]),
+    %% Resource already acquired
     case exo_socket:async_accept(State#state.listen) of
 	{ok,Ref} ->
-	    {noreply, State#state { ref = Ref }};
+	    {noreply, State#state { inet_ref = Ref }};
 	{error, Reason} ->
 	    {stop, Reason, State}
-	    %% {noreply, State#state { ref = undefined }}
+	    %% {noreply, State#state { inet_ref = undefined }}
     end;
 handle_info({Pid, ?MODULE, connected, Host, Port} = _Msg,
 	    #state{socket_reuse = #reuse{sessions = Sessions} = R} = State) ->
@@ -391,8 +402,10 @@ handle_info(_Info, State) ->
 %% @spec terminate(Reason, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, State) ->
+terminate(_Reason, State=#state {resource = Resource}) ->
     lager:debug("terminating, reason ~p.", [_Reason]),
+    exo_resource_srv:release(Resource), %% last acquired
+    exo_resource_srv:release(init), %% listen socket
     exo_socket:close(State#state.listen),
     ok.
 

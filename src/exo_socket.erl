@@ -16,7 +16,7 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @author Marina Westman Lonne <malotte@malotte.net>
+%%% @author Marina Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2016, Tony Rogvall
 %%% @doc
 %%%    EXO socket 
@@ -65,7 +65,15 @@ listen(Port) ->
 listen(Port, Opts) ->
     listen(Port,[tcp], Opts).
 
-listen(Port, Protos=[tcp|_], Opts0) 
+listen(Port, Protos, Opts0) ->
+    case exo_resource_srv:acquire(infinity) of
+	{resource, ok, Resource} ->
+	    listen(Port, Protos, Opts0, Resource);
+	{resource, error, _Error} ->
+	    lager:warning("acquire resource failed, reason ~p", [_Error])
+    end.
+
+listen(Port, Protos=[tcp|_], Opts0, Resource) 
   when is_integer(Port) -> %% tcp socket
     lager:debug("options=~w\n", [Opts0]),
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
@@ -90,12 +98,13 @@ listen(Port, Protos=[tcp|_], Opts0)
 			       packet   = Packet,
 			       flow     = Flow,
 			       opts     = Opts2,
-			       tags     = {tcp,tcp_closed,tcp_error}
+			       tags     = {tcp,tcp_closed,tcp_error},
+			       resource = Resource
 			     }};
 	Error ->
 	    Error
     end;
-listen(File, Protos=[tcp|_], Opts0) 
+listen(File, Protos=[tcp|_], Opts0, Resource) 
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
@@ -121,7 +130,8 @@ listen(File, Protos=[tcp|_], Opts0)
 			       flow     = Flow,
 			       opts     = Opts2,
 			       tags     = {tcp,tcp_closed,tcp_error},
-			       sockname  = File
+			       sockname  = File,
+			       resource = Resource
 			     }};
 	Error ->
 	    Error
@@ -139,7 +149,15 @@ connect(Host, Port, Opts) ->
 connect(Host, Port, Opts, Timeout) ->
     connect(Host, Port, [tcp], Opts, Timeout).
 
-connect(unix, File, Protos=[tcp|_], Opts0, Timeout) 
+connect(Host, File, Protos, Opts0, Timeout) ->
+    case exo_resource_srv:acquire(Timeout) of
+	{resource, ok, Resource} ->
+	    connect(Host, File, Protos, Opts0, Timeout, Resource);
+	{resource, error, _Error} ->
+	    lager:warning("acquire resource failed, reason ~p", [_Error])
+    end.
+
+connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource) 
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
@@ -163,7 +181,8 @@ connect(unix, File, Protos=[tcp|_], Opts0, Timeout)
 			      packet   = Packet,
 			      flow     = Flow,
 			      opts     = Opts2,
-			      tags     = {tcp,tcp_closed,tcp_error}
+			      tags     = {tcp,tcp_closed,tcp_error},
+			      resource = Resource
 			    },
 	    case connect_upgrade(X, tl(Protos), Timeout) of
 		{ok, X1} -> maybe_auth(X1, client, Opts2);
@@ -172,7 +191,7 @@ connect(unix, File, Protos=[tcp|_], Opts0, Timeout)
 	Error ->
 	    Error
     end;
-connect(Host, Port, Protos=[tcp|_], Opts0, Timeout) -> %% tcp socket
+connect(Host, Port, Protos=[tcp|_], Opts0, Timeout, Resource) -> %% tcp socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
     {TcpOpts, Opts2} = exo_lib:split_options(tcp_connect_options(), Opts1),
@@ -195,7 +214,8 @@ connect(Host, Port, Protos=[tcp|_], Opts0, Timeout) -> %% tcp socket
 			      packet   = Packet,
 			      flow     = Flow,
 			      opts     = Opts2,
-			      tags     = {tcp,tcp_closed,tcp_error}
+			      tags     = {tcp,tcp_closed,tcp_error},
+			      resource = Resource
 			    },
 	    case connect_upgrade(X, tl(Protos), Timeout) of
 		{ok, X1} -> 
@@ -563,9 +583,11 @@ request_type(_) -> undefined.
 %%
 %% exo_socket wrapper for socket operations
 %%
-close(#exo_socket { mdata = M, socket = S, flow = undefined}) ->
+close(#exo_socket { mdata = M, socket = S, resource = R, flow = undefined}) ->
+    exo_resource_srv:release(R),
     M:close(S);
-close(#exo_socket { mdata = M, socket = S, transport = T}) ->
+close(#exo_socket { mdata = M, socket = S, resource = R, transport = T}) ->
+    exo_resource_srv:release(R),
     exo_flow:delete(T), %% Delete both incoming and outgoing flow control
     M:close(S).
 

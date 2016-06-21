@@ -1,3 +1,4 @@
+%%% coding: latin-1
 %%%---- BEGIN COPYRIGHT -------------------------------------------------------
 %%%
 %%% Copyright (C) 2016, Rogvall Invest AB, <tony@rogvall.se>
@@ -15,6 +16,7 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @author Marina Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2016, Tony Rogvall
 %%% @doc
 %%%    EXO socket definition
@@ -41,6 +43,7 @@
 	  flow = undefined, %% Flow control policy, if any
 	  mauth,        %% user-provided auth module - if any
 	  auth_state,   %% state for user-provided auth module.
+	  resource,     %% 
 	  sockname      %% original sockname
 	}).
 

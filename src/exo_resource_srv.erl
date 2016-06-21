@@ -29,8 +29,10 @@
 
 %% functional api
 -export([acquire/1,
+	 acquire/2,
+	 acquire_async/2,
 	 release/1,
-	 acquire_async/2]).
+	 transfer/2]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -59,7 +61,7 @@
 	{
 	  state = init :: init | up,
 	  available::integer(),
-	  users ::?DICT_T(),
+	  resources ::?DICT_T(),
 	  waiting = []::list()
 	}).
 
@@ -78,7 +80,6 @@
 			{error, Error::term()}.
 
 start_link(Opts) ->
-    lager:info("~p: start_link: args = ~p\n", [?MODULE, Opts]),
     F =	case proplists:get_value(linked,Opts,true) of
 	    true -> start_link;
 	    false -> start
@@ -104,20 +105,38 @@ stop() ->
 %% @end
 %%--------------------------------------------------------------------
 -spec acquire(Timeout::timeout()) -> 
-		    ok | 
-		    {error, Error::atom()}.
+		    {resource, ok, Ref::term()} | 
+		    {resource, error, Error::atom()}.
 
 acquire(Timeout) 
   when (is_integer(Timeout) andalso Timeout > 0) orelse
        Timeout =:= infinity ->
     Ref = make_ref(),
-    gen_server:cast(?SERVER,{acquire, {self(), Ref}, Timeout}),
+    acquire(Ref, Timeout).
+	
+%%--------------------------------------------------------------------
+%% @doc
+%% Requests a namned resource and waits for the reply.
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec acquire(Ref::term(), Timeout::timeout()) -> 
+		    {resource, ok, Ref::term()} | 
+		    {resource, error, Error::atom()}.
+
+acquire(Ref, Timeout) 
+  when (is_integer(Timeout) andalso Timeout > 0) orelse
+       Timeout =:= infinity ->
+    gen_server:cast(?SERVER, {acquire, {self(), Ref}, Timeout}),
+    T = if Timeout =:= infinity -> Timeout;
+	   true -> Timeout + 1000
+	end,
     receive
 	Reply -> Reply
-    after Timeout + 1000 ->
-	    {error, not_available}
+    after T ->
+	    {resouce, error, not_available}
     end.
-	
+
 %%--------------------------------------------------------------------
 %% @doc
 %% Requests a resource and returns without waiting for reply.
@@ -131,7 +150,7 @@ acquire(Timeout)
 acquire_async(Ref, Timeout) 
   when (is_integer(Timeout) andalso Timeout > 0) orelse
        Timeout =:= infinity ->
-    gen_server:cast(?SERVER,{acquire, {self(), Ref}, Timeout}).
+    gen_server:cast(?SERVER, {acquire, {self(), Ref}, Timeout}).
 
 %%--------------------------------------------------------------------
 %% @doc
@@ -144,6 +163,19 @@ acquire_async(Ref, Timeout)
 
 release(Ref) ->
     gen_server:cast(?SERVER,{release, {self(), Ref}}).
+	
+%%--------------------------------------------------------------------
+%% @doc
+%% Transfer a resource
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec transfer(Ref::term(), NewPid::pid()) -> 
+		     ok | {error, Error::atom()}.
+
+transfer(Ref, NewPid) 
+  when is_pid(NewPid) ->
+    gen_server:cast(?SERVER,{transfer, {self(), Ref}, NewPid}).
 	
 %%--------------------------------------------------------------------
 %% @doc
@@ -195,7 +227,14 @@ avail()  ->
 
 init(Args) ->
     lager:debug("args = ~p,\n pid = ~p\n", [Args, self()]),
-    {ok, #ctx {state = up, available = calc_avail(), users = dict:new()}}.
+    case calc_avail() of
+	Avail when is_integer(Avail) ->
+	    {ok, #ctx {state = up, available = Avail, resources = dict:new()}};
+	{error, Error} ->
+	    lager:error("Not possible to determin system resources, "
+			"reason ~p", [Error]),
+	    {stop, Error}
+    end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -224,9 +263,11 @@ init(Args) ->
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
 handle_call(dump, _From, 
-	    Ctx=#ctx {available = Avail, users = Users, waiting = Waiting}) ->
+	    Ctx=#ctx {available = Avail, 
+		      resources = Resources, 
+		      waiting = Waiting}) ->
     io:format("Available: ~p\n", [Avail]),
-    io:format("Users = ~p\n", [dict:to_list(Users)]),
+    io:format("Resources = ~p\n", [dict:to_list(Resources)]),
     io:format("Waiting: ~p\n", [Waiting]),
     {reply, ok, Ctx};
 
@@ -251,29 +292,39 @@ handle_call(_R, _From, Ctx) ->
 %%--------------------------------------------------------------------
 -type cast_msg()::
 	{acquire, {Pid::pid(), Ref::term()}, Timeout::timeout()} |
-	{release, {Pid::pid(), Ref::term()}}.
+	{release, {Pid::pid(), Ref::term()}} |
+	{transfer, {Pid::pid(), Ref::term()}, NewPid::pid()}.
 
 -spec handle_cast(Msg::cast_msg(), Ctx::#ctx{}) -> 
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_cast({acquire, {Pid, _Ref} = User, Timeout} = _M, 
-	    Ctx=#ctx {users = Users}) ->
+handle_cast({acquire, {Pid, _Ref} = Resource, Timeout} = _M, 
+	    Ctx=#ctx {resources = Resources}) ->
     lager:debug("cast ~p.", [_M]),
-    NewCtx = case dict:is_key(User, Users) of
+    NewCtx = case dict:is_key(Resource, Resources) of
 		 false -> 
-		     handle_acquire(User, Timeout, Ctx);
+		     handle_acquire(Resource, Timeout, Ctx);
 		 true -> 
-		     Pid ! {error, ref_in_use},
+		     Pid ! {resource, error, ref_in_use},
 		     Ctx
 	     end,
     {noreply, NewCtx};
 
-handle_cast({release, User} = _M, Ctx=#ctx {users = Users}) ->
+handle_cast({release, Resource} = _M, Ctx=#ctx {resources = Resources}) ->
     lager:debug("cast ~p.", [_M]),
-    NewCtx = case dict:is_key(User, Users) of
+    NewCtx = case dict:is_key(Resource, Resources) of
 		 false -> Ctx;
-		 true -> handle_release(User, Ctx)
+		 true -> handle_release(Resource, Ctx)
+	     end,
+    {noreply, NewCtx};
+
+handle_cast({transfer, Resource, NewPid} = _M, 
+	    Ctx=#ctx {resources = Resources}) ->
+    lager:debug("cast ~p.", [_M]),
+    NewCtx = case dict:is_key(Resource, Resources) of
+		 false -> Ctx;
+		 true -> handle_transfer(Resource, NewPid, Ctx)
 	     end,
     {noreply, NewCtx};
 
@@ -297,9 +348,14 @@ handle_cast(_M, Ctx) ->
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_info({timeout, Timer, {acquire, User}} = _I, Ctx) ->
+handle_info({timeout, Timer, {acquire, Resource}} = _I, 
+	    Ctx=#ctx {resources = Resources}) ->
     lager:debug("info ~p.", [_I]),
-    {noreply, handle_timeout(User, Timer, Ctx)};
+    NewCtx = case dict:is_key(Resource, Resources) of
+		 false -> Ctx;
+		 true -> handle_timeout(Resource, Timer, Ctx)
+	     end,
+    {noreply, NewCtx};
 
 handle_info({'DOWN', _Mon, process, _Pid, _Reason} = I, Ctx) ->
     lager:debug("info ~p.", [I]),
@@ -337,99 +393,128 @@ code_change(_OldVsn, Ctx, _Extra) ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
-handle_acquire({Pid, Ref} = User, _Timeout, 
-	      Ctx=#ctx {available = Avail, users = Users})  
+handle_acquire({Pid, Ref} = Resource, _Timeout, 
+	      Ctx=#ctx {available = Avail, resources = Resources})  
   when Avail > 0 ->
-    Pid ! {ok, Ref},
-    NewUsers = supervise(User, Users),
-    Ctx#ctx {available = Avail - 1, users = NewUsers};
-handle_acquire(User, Timeout, 
-	       Ctx=#ctx {users = Users, waiting = Waiting}) ->
-    NewUsers = supervise(User, Users),
-    Timer = erlang:start_timer(Timeout, self(), {acquire, User}),
-    Ctx#ctx {users = NewUsers, waiting = Waiting ++ [{User, Timer}]}.
+    Pid ! {resource, ok, Ref},
+    NewResources = supervise(Resource, Resources),
+    Ctx#ctx {available = Avail - 1, resources = NewResources};
+handle_acquire(Resource, Timeout, 
+	       Ctx=#ctx {resources = Resources, waiting = Waiting}) ->
+    NewResources = supervise(Resource, Resources),
+    Timer = start_timer(Resource, Timeout),
+    lager:debug("no resource available, ~p waiting", [Resource]),
+     Ctx#ctx {resources = NewResources, 
+	     waiting = Waiting ++ [{Resource, Timer}]}.
 
-handle_release(User, Ctx=#ctx {waiting = Waiting}) ->
-    NewCtx = unsupervise(User, Ctx),
-    handle_waiting(Waiting, NewCtx).
+handle_release(Resource, 
+	       Ctx=#ctx {available = Avail, 
+			 waiting = Waiting, 
+			 resources = Resources}) ->
+    NewResources = unsupervise(Resource, Resources),
+    handle_waiting(Waiting, Ctx#ctx {resources = NewResources,
+				     available = Avail + 1}).
+
+handle_transfer({Pid, Ref}, NewPid, Ctx=#ctx {resources = Resources}) ->
+    NewResources = unsupervise({Pid, Ref}, supervise({NewPid, Ref}, Resources)),
+    Ctx#ctx {resources = NewResources}.
 
 handle_waiting([{{Pid, Ref}, Timer} | Rest], Ctx=#ctx {available = Avail})
   when Avail > 0 ->
-    Pid ! {ok, Ref},
-    erlang:cancel_timer(Timer),
+    Pid ! {resource, ok, Ref},
+    cancel_timer(Timer),
     lager:debug("resource available after release, ~p informed", [Pid]),
     handle_waiting(Rest, Ctx#ctx {available = Avail - 1});
 handle_waiting(NewWaiting, Ctx) ->
     %% No more available resources or no more processes waiting
     Ctx#ctx {waiting = NewWaiting}.
 
-handle_timeout(User, Timer, 
+handle_timeout(Resource, Timer, 
 	       Ctx=#ctx {available = Avail, waiting = Waiting}) 
   when Avail > 0 ->
-    case lists:keytake(User, 1, Waiting) of
-	{value, {{Pid, Ref} = User, Timer}, NewWaiting} ->
-	    Pid ! {ok, Ref},
+    case lists:keytake(Resource, 1, Waiting) of
+	{value, {{Pid, Ref} = Resource, Timer}, NewWaiting} ->
+	    Pid ! {resource, ok, Ref},
 	    lager:debug("resource available after timeout, ~p informed", 
 			[Pid]),
 	    #ctx {available = Avail - 1, waiting = NewWaiting};
 	false ->
-	    lager:warning("user ~p not found in waiting list", [User]),
+	    lager:warning("resource ~p not found in waiting list", [Resource]),
 	    Ctx
     end;
-handle_timeout(User, Timer, Ctx=#ctx {waiting = Waiting}) ->
-     case lists:keytake(User, 1, Waiting) of
-	 {value, {{Pid, _Ref} = User, Timer}, NewWaiting} ->
-	     Pid ! {error, not_available},
+handle_timeout(Resource, Timer, 
+	       Ctx=#ctx {waiting = Waiting, 
+			 resources = Resources,
+			 available = Avail}) ->
+     case lists:keytake(Resource, 1, Waiting) of
+	 {value, {{Pid, _Ref} = Resource, Timer}, NewWaiting} ->
+	     Pid ! {resource, error, not_available},
 	     lager:debug("resource not available after timeout, ~p informed", 
 			[Pid]),
-	     unsupervise(User, Ctx#ctx {waiting = NewWaiting}); 
+	     NewResources = unsupervise(Resource, Resources),
+	     Ctx#ctx {waiting = NewWaiting, 
+		      resources = NewResources,
+		      available = Avail + 1};
 	false ->
 	    Ctx
     end.
 
-handle_down({'DOWN', Mon, process, Pid, _Reason},
-	    Ctx=#ctx {users = Users, waiting = Waiting, available = Avail}) ->
-    case dict:find(Mon, Users) of
-	{ok, User} ->
-	    lager:debug("removing user ~p", [User]),
-	    if _Reason =/= normal ->
-		    lager:warning("user ~p DOWN, reason ~p", [Pid, _Reason]);
-	       true ->
-		    ok
-	    end,
-	    NewUsers = dict:erase(User, dict:erase(Mon, Users)),
-	    case lists:keytake(User, 1, Waiting) of
-		{value, {User, Timer}, Rest} ->
-		    lager:debug("user ~p was waiting", [User]),
+handle_down({'DOWN', Mon, process, Pid, Reason},
+	    Ctx=#ctx {resources = Resources, 
+		      waiting = Waiting, 
+		      available = Avail}) ->
+    case dict:find(Mon, Resources) of
+	{ok, Resource} ->
+	    lager:debug("removing resource ~p", [Resource]),
+	    check_if_normal(Reason, Pid),
+	    NewResources = dict:erase(Resource, dict:erase(Mon, Resources)),
+	    case lists:keytake(Resource, 1, Waiting) of
+		{value, {Resource, Timer}, Rest} ->
+		    lager:debug("resource ~p was waiting", [Resource]),
 		    erlang:cancel_timer(Timer),
-		    Ctx#ctx{users = NewUsers, waiting = Rest};
+		    Ctx#ctx{resources = NewResources, waiting = Rest};
 		false ->
-		    lager:debug("user ~p was active", [User]),
+		    lager:debug("resource ~p was active", [Resource]),
 		    handle_waiting(Waiting,
-				   Ctx#ctx{users = NewUsers, 
+				   Ctx#ctx{resources = NewResources, 
 					   available = Avail + 1})
 	    end;
 	_Other ->
-	    lager:debug("down received for unknown user ~p", [Pid]),
+	    lager:debug("down received for unknown resource ~p", [Pid]),
 	    Ctx
     end.
 
+check_if_normal(normal, _Pid) ->
+    ok;
+check_if_normal(_Reason, _Pid) ->
+    lager:warning("resource ~p DOWN, reason ~p",  [_Pid, _Reason]).
 
-supervise({Pid, _Ref} = User, Users) ->
+supervise({Pid, _Ref} = Resource, Resources) ->
+    lager:debug("monitor resource ~p", [Resource]),
     Mon = erlang:monitor(process, Pid),
-    dict:store(User, Mon, dict:store(Mon, User, Users)).
+    dict:store(Resource, Mon, dict:store(Mon, Resource, Resources)).
 
-unsupervise(User, Ctx=#ctx {users = Users, available = Avail}) ->
-    case dict:find(User, Users) of
+unsupervise(Resource, Resources) ->
+    case dict:find(Resource, Resources) of
 	{ok, Mon} ->
-	    lager:debug("demonitor user ~p", [User]),
+	    lager:debug("demonitor resource ~p", [Resource]),
 	    erlang:demonitor(Mon),
-	    NewUsers = dict:erase(User, dict:erase(Mon, Users)),
-	    Ctx#ctx {users = NewUsers, available = Avail + 1};
+	    dict:erase(Resource, dict:erase(Mon, Resources));
 	error ->
-	    lager:warning("unsupervised user ~p", [User]),
-	    Ctx
+	    lager:warning("unsupervised resource ~p", [Resource]),
+	    Resources
     end.
+
+start_timer(_Resource, infinity) ->
+    undefined;
+start_timer(Resource, Timeout) ->
+    erlang:start_timer(Timeout, self(), {acquire, Resource}).
+
+cancel_timer(undefined) ->
+    ok;
+cancel_timer(Timer) ->
+    erlang:cancel_timer(Timer).
+
 
 calc_avail() ->
     MaxPorts = erlang:system_info(port_limit) - 
@@ -437,7 +522,11 @@ calc_avail() ->
     ReservedPorts = max(trunc(0.1 * MaxPorts), ?RESERVED_PORTS),
     MaxFds = max_fds(),
     ReservedFds = max(trunc(0.1 * MaxFds), ?RESERVED_FDS),
-    min(MaxPorts - ReservedPorts, MaxFds - ReservedFds).
+    ErlangPorts = [erlang:port_info(Port, name) || Port <- erlang:ports()],
+    ErlangFds = [Name || {name, Name} <- ErlangPorts, 
+			 (Name =:= "efile" orelse Name =:= "tcp_inet" orelse
+			  Name =:= "udp_inet" orelse Name =:= "afunix_drv")],
+    min(MaxPorts - ReservedPorts, MaxFds - ReservedFds - length(ErlangFds)).
 
 max_fds() ->
     case proplists:get_value(max_fds, erlang:system_info(check_io)) of
@@ -448,8 +537,11 @@ max_fds() ->
 ulimit_fds() ->
     case string:tokens(os:cmd("ulimit -n"), "\n") of
 	[Fds] ->
-	    list_to_integer(Fds);
-	_ ->
-	    %% ??
-	    256
+	    try list_to_integer(Fds)
+	    catch 
+		error:_ ->   {error, list_to_integer_failed}
+	    end;
+	_Other ->
+	    lager:error("ulimit result ~p",[_Other]),
+	    {error, ulimit_failed}
     end.
