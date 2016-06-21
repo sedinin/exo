@@ -125,11 +125,11 @@ acquire(Timeout)
 %% @end
 %%--------------------------------------------------------------------
 -spec acquire_async(Ref::term(), Timeout::timeout()) -> 
-			  {ok, Ref::term()} | 
+			  ok | 
 			  {error, Error::atom()}.
 
 acquire_async(Ref, Timeout) 
-  when is_integer(Timeout); 
+  when (is_integer(Timeout) andalso Timeout > 0) orelse 
        Timeout =:= infinity ->
     gen_server:cast(?SERVER,{acquire, Ref, Timeout, self()}).
 
