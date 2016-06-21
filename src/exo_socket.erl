@@ -66,7 +66,7 @@ listen(Port, Opts) ->
     listen(Port,[tcp], Opts).
 
 listen(Port, Protos, Opts0) ->
-    case exo_resource_srv:acquire(infinity) of
+    case exo_resource:acquire(infinity) of
 	{resource, ok, Resource} ->
 	    listen(Port, Protos, Opts0, Resource);
 	{resource, error, _Error} ->
@@ -150,7 +150,7 @@ connect(Host, Port, Opts, Timeout) ->
     connect(Host, Port, [tcp], Opts, Timeout).
 
 connect(Host, File, Protos, Opts0, Timeout) ->
-    case exo_resource_srv:acquire(Timeout) of
+    case exo_resource:acquire(Timeout) of
 	{resource, ok, Resource} ->
 	    connect(Host, File, Protos, Opts0, Timeout, Resource);
 	{resource, error, _Error} ->
@@ -584,10 +584,10 @@ request_type(_) -> undefined.
 %% exo_socket wrapper for socket operations
 %%
 close(#exo_socket { mdata = M, socket = S, resource = R, flow = undefined}) ->
-    exo_resource_srv:release(R),
+    exo_resource:release(R),
     M:close(S);
 close(#exo_socket { mdata = M, socket = S, resource = R, transport = T}) ->
-    exo_resource_srv:release(R),
+    exo_resource:release(R),
     exo_flow:delete(T), %% Delete both incoming and outgoing flow control
     M:close(S).
 

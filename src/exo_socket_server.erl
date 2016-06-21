@@ -194,7 +194,7 @@ init([Port,Protos,Options,Module,SessionOptions] = _X) ->
 	{ok,Listen} ->
 	    %% Acquire resource for first connection
 	    Resource = make_ref(),
-	    exo_resource_srv:acquire_async(Resource, infinity),
+	    exo_resource:acquire_async(Resource, infinity),
 	    {ok, #state{ listen = Listen, 
 			 active = Active, 
 			 socket_reuse = Reuse,
@@ -315,11 +315,11 @@ handle_info({inet_async, LSocket, Ref, {ok,Socket}} = _Msg,
 			 end),
     inet:tcp_controlling_process(Socket, Pid),
     %% Turn over control to socket session
-    exo_resource_srv:transfer(Resource, Pid),
+    exo_resource:transfer(Resource, Pid),
     Pid ! controlling,
     %% Acquire resource for next connection
     NewResource = make_ref(),
-    exo_resource_srv:acquire_async(NewResource, infinity),
+    exo_resource:acquire_async(NewResource, infinity),
     {noreply, State#state {resource = NewResource}};
 
 %% handle {ok,Socket} on bad ref ?
@@ -404,8 +404,8 @@ handle_info(_Info, State) ->
 %%--------------------------------------------------------------------
 terminate(_Reason, State=#state {resource = Resource}) ->
     lager:debug("terminating, reason ~p.", [_Reason]),
-    exo_resource_srv:release(Resource), %% last acquired
-    exo_resource_srv:release(init), %% listen socket
+    exo_resource:release(Resource), %% last acquired
+    exo_resource:release(init), %% listen socket
     exo_socket:close(State#state.listen),
     ok.
 
