@@ -75,16 +75,17 @@ listen(Port, Protos, Opts0) ->
 
 listen(Port, Protos=[tcp|_], Opts0, Resource) 
   when is_integer(Port) -> %% tcp socket
-    lager:debug("options=~w\n", [Opts0]),
+    lager:debug("options=~w", [Opts0]),
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
     {TcpOpts, Opts2} = exo_lib:split_options(tcp_listen_options(), Opts1),
-    lager:debug("listen options=~w, other=~w\n", [TcpOpts, Opts2]),
+    lager:debug("listen options=~w, other=~w", [TcpOpts, Opts2]),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
     {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
-    TcpListenOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
+    TcpListenOpts =
+	[{active,false},{packet,0},{mode,binary},{backlog, 10}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     case gen_tcp:listen(Port, TcpListenOpts) of
 	{ok, L} ->
@@ -109,12 +110,13 @@ listen(File, Protos=[tcp|_], Opts0, Resource)
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
     {TcpOpts, Opts2} = exo_lib:split_options(tcp_listen_options(), Opts1),
-    lager:debug("listen options=~w, other=~w\n", [TcpOpts, Opts2]),
+    lager:debug("listen options=~w, other=~w", [TcpOpts, Opts2]),
     Active = proplists:get_value(active, TcpOpts, false),
     Mode   = proplists:get_value(mode, TcpOpts, list),
     Packet = proplists:get_value(packet, TcpOpts, 0),
     {_, TcpOpts1} = exo_lib:split_options([active,packet,mode], TcpOpts),
-    TcpListenOpts = [{active,false},{packet,0},{mode,binary}|TcpOpts1],
+    TcpListenOpts =
+	[{active,false},{packet,0},{mode,binary},{backlog, 10}|TcpOpts1],
     Flow = proplists:get_value(flow, Opts2, undefined),
     file:delete(File),
     case afunix:listen(File, TcpListenOpts) of
@@ -276,8 +278,8 @@ maybe_auth_(X, Role0, Opts) ->
 			    catch
 				error:Err ->
 				    lager:debug("Caught error: ~p~n"
-					   "Trace = ~p~n",
-					   [Err, erlang:get_stacktrace()]),
+						"Trace = ~p~n",
+						[Err, erlang:get_stacktrace()]),
 				    shutdown(X, write),
 				    {error, einval}
 			    end;
@@ -314,19 +316,19 @@ auth_incoming(#exo_socket{mauth = M, auth_state = Sa} = X, Data) ->
 
 
 connect_upgrade(X, Protos0, Timeout) ->
-    lager:debug("connect protos=~w\n", [Protos0]),
+    lager:debug("connect protos=~w", [Protos0]),
     case Protos0 of
 	[ssl|Protos1] ->
 	    Opts = X#exo_socket.opts,
 	    {SSLOpts0,Opts1} = exo_lib:split_options(ssl_connect_opts(),Opts),
 	    {_,SSLOpts} = exo_lib:split_options([ssl_imp], SSLOpts0),
-	    lager:debug("SSL upgrade, options = ~w\n", [SSLOpts]),
-	    lager:debug("before ssl:connect opts=~w\n", 
-		 [getopts(X, [active,packet,mode])]),
+	    lager:debug("SSL upgrade, options = ~w", [SSLOpts]),
+	    lager:debug("before ssl:connect opts=~w",
+			[getopts(X, [active,packet,mode])]),
 	    case ssl_connect(X#exo_socket.socket, SSLOpts, Timeout) of
 		{ok,S1} ->
-		    lager:debug("ssl:connect opt=~w\n", 
-			 [ssl:getopts(S1, [active,packet,mode])]),
+		    lager:debug("ssl:connect opt=~w",
+				[ssl:getopts(S1, [active,packet,mode])]),
 		    X1 = X#exo_socket { socket=S1,
 					mdata = ssl,
 					mctl  = ssl,
@@ -334,8 +336,7 @@ connect_upgrade(X, Protos0, Timeout) ->
 					tags={ssl,ssl_closed,ssl_error}},
 		    connect_upgrade(X1, Protos1, Timeout);
 		{error,Reason} ->
-		    lager:debug("ssl:connect error=~w\n", 
-				[Reason]),
+		    lager:debug("ssl:connect error=~w", [Reason]),
 		    {error,Reason}
 	    end;
 	[http|Protos1] ->
@@ -352,8 +353,8 @@ connect_upgrade(X, Protos0, Timeout) ->
 	    setopts(X, [{mode,X#exo_socket.mode},
 			{packet,X#exo_socket.packet},
 			{active,X#exo_socket.active}]),
-	    lager:debug("after upgrade opts=~w\n", 
-		 [getopts(X, [active,packet,mode])]),
+	    lager:debug("after upgrade opts=~w",
+			[getopts(X, [active,packet,mode])]),
 	    {ok,X}
     end.
 			       
@@ -390,6 +391,8 @@ async_accept(X,Timeout) when
 		{ok,Ref} ->
 		    {ok, Ref};
 		Error ->
+		    lager:debug("prim_inet:async_accept failed, reason ~p",
+				[Error]),
 		    Error
 	    end;
 	_ ->
@@ -423,18 +426,24 @@ async_socket(Listen, Socket, AuthOpts, Timeout)
 				    maybe_flow_control(X2);
 				Error ->
 				    prim_inet:close(Socket),
+				    lager:debug("maybe_auth failed, "
+						"reason ~p", [Error]),
 				    Error
 			    end;
 			Error ->
 			    prim_inet:close(Socket),
+			    lager:debug("accept_upgrade failed, "
+					"reason ~p", [Error]),
 			    Error
 		    end;
 		Error ->
 		    prim_inet:close(Socket),
+		    lager:debug("inet:setops failed, reason ~p", [Error]),
 		    Error
 	    end;
 	Error ->
 	    prim_inet:close(Socket),
+	    lager:debug("getops failed, reason ~p", [Error]),
 	    Error
     end.
 
@@ -448,7 +457,7 @@ accept(X, Timeout) when
     accept_upgrade(X, X#exo_socket.protocol, Timeout).
 
 accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
-    lager:debug("accept protos=~w\n", [Protos0]),
+    lager:debug("accept protos=~w", [Protos0]),
     case Protos0 of
 	[tcp|Protos1] ->
 	    case M:accept(X#exo_socket.socket, Timeout) of
@@ -456,15 +465,16 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 		    X1 = X#exo_socket {transport=A,socket=A},
 		    accept_upgrade(X1,Protos1,Timeout);
 		{error,Reason} ->
+		    lager:debug("~p:accept failed, reason ~p", [M, Reason]),
 		    {error,Reason}
 	    end;
 	[ssl|Protos1] ->
 	    Opts = X#exo_socket.opts,
 	    {SSLOpts0,Opts1} = exo_lib:split_options(ssl_listen_opts(),Opts),
 	    {_,SSLOpts} = exo_lib:split_options([ssl_imp], SSLOpts0),
-	    lager:debug("SSL upgrade, options = ~w\n", [SSLOpts]),
-	    lager:debug("before ssl_accept opt=~w\n", 
-		 [getopts(X, [active,packet,mode])]),
+	    lager:debug("SSL upgrade, options = ~w", [SSLOpts]),
+	    lager:debug("before ssl_accept opt=~w",
+			[getopts(X, [active,packet,mode])]),
 
 	    if X#exo_socket.mctl =:= afunix ->
 		    afunix:setsockname(X#exo_socket.socket, {{127,0,0,1},1234}),
@@ -476,8 +486,8 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    
 	    case ssl_accept(X#exo_socket.socket, SSLOpts, Timeout) of
 		{ok,S1} ->
-		    lager:debug("ssl_accept opt=~w\n", 
-			 [ssl:getopts(S1, [active,packet,mode])]),
+		    lager:debug("ssl_accept opt=~w",
+				[ssl:getopts(S1, [active,packet,mode])]),
 		    X1 = X#exo_socket{socket=S1,
 				      mdata = ssl,
 				      mctl  = ssl,
@@ -485,8 +495,7 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 				      tags={ssl,ssl_closed,ssl_error}},
 		    accept_upgrade(X1, Protos1, Timeout);
 		{error,Reason} ->
-		    lager:debug("ssl:ssl_accept error=~w\n", 
-				[Reason]),
+		    lager:warning("ssl:ssl_accept error=~w", [Reason]),
 		    {error,Reason}
 	    end;
 	[probe_ssl|Protos1] ->
@@ -505,8 +514,8 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    setopts(X, [{mode,X#exo_socket.mode},
 			{packet,X#exo_socket.packet},
 			{active,X#exo_socket.active}]),
-	    lager:debug("after upgrade opts=~w\n", 
-		 [getopts(X, [active,packet,mode])]),
+	    lager:debug("after upgrade opts=~w",
+			[getopts(X, [active,packet,mode])]),
 	    {ok,X}
     end.
 
@@ -514,32 +523,32 @@ accept_probe_ssl(X=#exo_socket { mdata=M, socket=S,
 				 tags = {TData,TClose,TError}},
 		 Protos,
 		 Timeout) ->
-    lager:debug("protos=~w\n", [Protos]),
+    lager:debug("protos=~w", [Protos]),
     setopts(X, [{active,once}]),
     receive
 	{TData, S, Data} ->
-	    lager:debug("Accept data=~w\n", [Data]),
+	    lager:debug("Accept data=~w", [Data]),
 	    case request_type(Data) of
 		ssl ->
-		    lager:debug("request type: ssl\n",[]),
+		    lager:debug("request type: ssl",[]),
 		    ok = M:unrecv(S, Data),
-		    lager:debug("~w:unrecv(~w, ~w)\n", [M,S,Data]),
+		    lager:debug("~w:unrecv(~w, ~w)", [M,S,Data]),
 		    %% insert ssl after transport
 		    Protos1 = X#exo_socket.protocol--([probe_ssl|Protos]),
 		    Protos2 = Protos1 ++ [ssl|Protos],
 		    accept_upgrade(X#exo_socket{protocol=Protos2},
 				   [ssl|Protos],Timeout);
 		_ -> %% not ssl
-		    lager:debug("request type: NOT ssl\n",[]),
+		    lager:debug("request type: NOT ssl",[]),
 		    ok = M:unrecv(S, Data),
-		    lager:debug("~w:unrecv(~w, ~w)\n", [M,S,Data]),
+		    lager:debug("~w:unrecv(~w, ~w)", [M,S,Data]),
 		    accept_upgrade(X,Protos,Timeout)
 	    end;
 	{TClose, S} ->
-	    lager:debug("accept_probe_ssl: closed\n", []),
+	    lager:warning("accept_probe_ssl: closed", []),
 	    {error,closed};
 	{TError, S, Error} ->
-	    lager:debug("accept_probe_ssl: error ~w\n", [Error]),
+	    lager:warning("accept_probe_ssl: error ~w", [Error]),
 	    {error,Error}
     after
 	Timeout ->
