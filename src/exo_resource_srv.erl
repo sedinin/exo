@@ -45,16 +45,13 @@
 	}).
 
 %%%===================================================================
-%%% API
-%%%===================================================================
-%%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Initializes the server
+%% Initializes the server.
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -68,7 +65,7 @@ init(Args) ->
 	Avail when is_integer(Avail) ->
 	    {ok, #ctx {state = up, available = Avail, resources = dict:new()}};
 	{error, Error} ->
-	    lager:error("Not possible to determin system resources, "
+	    lager:error("Not possible to determine system resources, "
 			"reason ~p", [Error]),
 	    {stop, Error}
     end.
@@ -79,6 +76,7 @@ init(Args) ->
 %% Handling call messages.
 %% Request can be the following:
 %% <ul>
+%% <li> avail - Sets available resources (for testing). </li>
 %% <li> dump - Writes loop data to standard out (for debugging).</li>
 %% <li> stop - Stops the application.</li>
 %% </ul>
@@ -124,6 +122,12 @@ handle_call(_R, _From, Ctx) ->
 %% @private
 %% @doc
 %% Handling cast messages.
+%% Message can be the following:
+%% <ul>
+%% <li> acquire - Request a resource. </li>
+%% <li> release - Release a resource.</li>
+%% <li> transfer - Transfer a resource.</li>
+%% </ul>
 %%
 %% @end
 %%--------------------------------------------------------------------
@@ -174,11 +178,17 @@ handle_cast(_M, Ctx) ->
 %% @private
 %% @doc
 %% Handling all non call/cast messages.
+%% Message can be the following:
+%% <ul>
+%% <li> timeout - No resource available before Timeout. </li>
+%% <li> down - Monitored process is down.</li>
+%% </ul>
 %% 
 %% @end
 %%--------------------------------------------------------------------
 -type info()::
-	term().
+	{timeout, Timer::reference(), {acquire, Resource::term()}} |
+	{'DOWN', Mon::reference(), process, Pid::pid(), Reason::term()}.
 
 -spec handle_info(Info::info(), Ctx::#ctx{}) -> 
 			 {noreply, Ctx::#ctx{}} |
@@ -204,6 +214,10 @@ handle_info(_Info, Ctx) ->
 
 %%--------------------------------------------------------------------
 %% @private
+%% @doc
+%% Clean up when terminating.
+%%
+%% @end
 %%--------------------------------------------------------------------
 -spec terminate(Reason::term(), Ctx::#ctx{}) -> 
 		       no_return().
@@ -215,7 +229,7 @@ terminate(_Reason, _Ctx=#ctx {state = State}) ->
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
-%% Convert process ctx when code is changed
+%% Convert process ctx when code is changed.
 %%
 %% @end
 %%--------------------------------------------------------------------
