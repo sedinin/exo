@@ -96,8 +96,7 @@ start_link(Port, Options) ->
 
 
 do_start(Start, Port, Options) ->
-    lager:debug("exo_http_server: ~w: port ~p, server options ~p",
-	   [Start, Port, Options]),
+    lager:debug("~w: port ~p, server options ~p", [Start, Port, Options]),
     {SessionOptions,Options1} = 
 	exo_lib:split_options([request_handler,access,private_key,idle_timeout],
 			      Options),
@@ -139,10 +138,10 @@ stop(Pid) ->
 		  {ok, State::#state{}}.
 
 init(Socket, Options) ->
-    lager:debug("exo_http_server: connection on: ~p ", [Socket]),
+    lager:debug("connection on: ~p ", [Socket]),
     {ok, _PeerName} = exo_socket:peername(Socket),
     {ok, _SockName} = exo_socket:sockname(Socket),
-    lager:debug("exo_http_server: connection from peer: ~p, sockname: ~p,\n"
+    lager:debug("connection from peer: ~p, sockname: ~p,\n"
 		"options ~p", [_PeerName, _SockName, Options]),
     Access = proplists:get_value(access, Options, []),
     RH = proplists:get_value(request_handler, Options, undefined),
@@ -176,7 +175,7 @@ control(_Socket, _Request, _From, State) ->
 		  {stop, {error, Reason::term()}, NewState::#state{}}.
 
 data(Socket, Data, State) ->
-    lager:debug("exo_http_server:~w: data = ~w\n", [self(),Data]),
+    lager:debug("~w: data = ~w", [self(),Data]),
     case Data of
 	{http_request, Method, Uri, Version} ->
 	    CUri = exo_http:convert_uri(Uri),
@@ -192,7 +191,7 @@ data(Socket, Data, State) ->
 	{http_error, ?NL} ->
 	    {ok, State};
 	_ when is_list(Data); is_binary(Data) ->
-	    lager:debug("exo_http_server: request data: ~p\n", [Data]),
+	    lager:debug("request data: ~p", [Data]),
 	    {stop, {error,sync_error}, State};
 	Error ->
 	    {stop, Error, State}
@@ -211,7 +210,7 @@ data(Socket, Data, State) ->
 		  {stop, {error, Reason::term()}, NewState::#state{}}.
 
 info(_Socket, Info, State) ->
-    lager:debug("exo_http_server:~w: info = ~w\n", [self(),Info]),
+    lager:debug("~w: info = ~w", [self(),Info]),
     {ok,State}.
 
 %%-----------------------------------------------------------------------------
@@ -225,7 +224,7 @@ info(_Socket, Info, State) ->
 		   {ok, NewState::#state{}}.
 
 close(_Socket, State) ->
-    lager:debug("exo_http_server: close\n", []),
+    lager:debug("close", []),
     {ok,State}.
 
 %%-----------------------------------------------------------------------------
@@ -241,12 +240,12 @@ close(_Socket, State) ->
 		   {stop, {error, Reason::term()}, NewState::#state{}}.
 
 error(_Socket,Error,State) ->
-    lager:debug("exo_http_serber: error = ~p\n", [Error]),
+    lager:debug("error = ~p", [Error]),
     {stop, Error, State}.
 
 
 handle_request(Socket, R, State) ->
-    lager:debug("exo_http_server: request = ~s\n",
+    lager:debug("request = ~s",
 	 [[exo_http:format_request(R),?CRNL,
 	   exo_http:format_hdr(R#http_request.headers),
 	   ?CRNL]]),
@@ -411,8 +410,7 @@ unq_([]) -> [].
 
 handle_body(Socket, Request, Body, State) ->
     RH = State#state.request_handler,
-    lager:debug("calling ~p with -BODY:\n~s\n-END-BODY\n",
-		[RH, Body]),
+    lager:debug("calling ~p with -BODY:\n~s\n-END-BODY\n", [RH, Body]),
     {M, F, As} = request_handler(RH, Socket, Request, Body),
     try apply(M, F, As) of
 	ok -> {ok, State};
@@ -504,7 +502,7 @@ response(S, Connection, Status, Phrase, Body, Opts) ->
 		exo_http:format_hdr(H),
 		?CRNL,
 		Body],
-    lager:debug("exo_http_server: response:\n~s\n", [Response]),
+    lager:debug("response:\n~s", [Response]),
     exo_socket:send(S, Response),
     if Connection1 =:= "close" ->
 	    stop;
@@ -562,7 +560,7 @@ response_r(S, Request, Status, Phrase, Body, Opts) ->
 		exo_http:format_hdr(H),
 		?CRNL,
 		Body],
-    lager:debug("exo_http_server: response:\n~s\n", [Response]),
+    lager:debug("response:\n~s", [Response]),
     exo_socket:send(S, Response),
     if Connection1 =:= "close" ->
 	    stop;
@@ -586,7 +584,7 @@ opt_take(K, L, Def) ->
 %% @private
 handle_http_request(Socket, Request, Body) ->
     Url = Request#http_request.uri,
-    lager:debug("exo_http_server: -BODY:\n~s\n-END-BODY\n", [Body]),
+    lager:debug("\n-BODY:\n~s\n-END-BODY\n", [Body]),
     if Request#http_request.method =:= 'GET',
        Url#url.path =:= "/quit" ->
 	    response_r(Socket, Request, 200, "OK", "QUIT",
