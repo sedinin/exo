@@ -199,19 +199,26 @@ avail()  ->
 %%
 %% @end
 %%--------------------------------------------------------------------
--spec calc_avail() -> Avail::integer().
+-spec calc_avail() -> Avail::integer() | {error, Error::atom()}.
 
 calc_avail() ->
     MaxPorts = erlang:system_info(port_limit) - 
 		       erlang:system_info(port_count),
     ReservedPorts = max(trunc(0.1 * MaxPorts), ?RESERVED_PORTS),
-    MaxFds = max_fds(),
-    ReservedFds = max(trunc(0.1 * MaxFds), ?RESERVED_FDS),
-    ErlangPorts = [erlang:port_info(Port, name) || Port <- erlang:ports()],
-    ErlangFds = [Name || {name, Name} <- ErlangPorts, 
+    case max_fds() of
+	MaxFds when is_integer(MaxFds) ->
+	    ReservedFds = max(trunc(0.1 * MaxFds), ?RESERVED_FDS),
+	    ErlangPorts = [erlang:port_info(Port, name) || 
+			      Port <- erlang:ports()],
+	    ErlangFds = [Name || {name, Name} <- ErlangPorts, 
 			 (Name =:= "efile" orelse Name =:= "tcp_inet" orelse
 			  Name =:= "udp_inet" orelse Name =:= "afunix_drv")],
-    min(MaxPorts - ReservedPorts, MaxFds - ReservedFds - length(ErlangFds)).
+	    min(MaxPorts - ReservedPorts, 
+		MaxFds - ReservedFds - length(ErlangFds));
+	{error, _Reason} = E ->
+	    lager:debug("calc_avail failed, reason ~p",[_Reason]),
+	    E
+    end.
 
 max_fds() ->
     case proplists:get_value(max_fds, erlang:system_info(check_io)) of
