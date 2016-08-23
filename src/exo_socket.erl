@@ -545,10 +545,10 @@ accept_probe_ssl(X=#exo_socket { mdata=M, socket=S,
 		    accept_upgrade(X,Protos,Timeout)
 	    end;
 	{TClose, S} ->
-	    lager:warning("accept_probe_ssl: closed", []),
+	    lager:warning("closed", []),
 	    {error,closed};
 	{TError, S, Error} ->
-	    lager:warning("accept_probe_ssl: error ~w", [Error]),
+	    lager:warning("error ~w", [Error]),
 	    {error,Error}
     after
 	Timeout ->
@@ -613,7 +613,8 @@ send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
 	ok -> 
 	    send1(X, Data);
 	{action, throw} ->
-	    lager:warning("Message thrown due to overload protection"),
+	    lager:warning("Message ~p thrown due to overload protection",
+			 [Data]),
 	    ok;
 	{action, wait} ->
 	    lager:warning("Message delayed due to overload protection", []),
