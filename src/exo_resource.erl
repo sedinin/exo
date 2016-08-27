@@ -40,9 +40,13 @@
 	 avail/1,
 	 avail/0]).
 
+-export([port_limit/0]).
+-export([port_count/0]).
+
 -define(SERVER, exo_resource_srv).
 -define(RESERVED_PORTS, 30). 
 -define(RESERVED_FDS, 20). 
+-define(DEFAULT_MAX_PORTS, 1024).  %% fixme
 
 %% For dialyzer
 -type start_options()::{linked, TrueOrFalse::boolean()}.
@@ -202,8 +206,7 @@ avail()  ->
 -spec calc_avail() -> Avail::integer() | {error, Error::atom()}.
 
 calc_avail() ->
-    MaxPorts = erlang:system_info(port_limit) - 
-		       erlang:system_info(port_count),
+    MaxPorts = port_limit() - port_count(),
     ReservedPorts = max(trunc(0.1 * MaxPorts), ?RESERVED_PORTS),
     case max_fds() of
 	MaxFds when is_integer(MaxFds) ->
@@ -218,6 +221,16 @@ calc_avail() ->
 	{error, _Reason} = E ->
 	    lager:debug("calc_avail failed, reason ~p",[_Reason]),
 	    E
+    end.
+
+port_limit() ->
+    try erlang:system_info(port_limit)
+    catch error:_ -> ?DEFAULT_MAX_PORTS
+    end.
+
+port_count() ->
+    try erlang:system_info(port_count)
+    catch error:_ -> length(erlang:ports())
     end.
 
 max_fds() ->
