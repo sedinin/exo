@@ -154,9 +154,16 @@ connect(Host, Port, Opts, Timeout) ->
 connect(Host, File, Protos, Opts0, Timeout) ->
     case exo_resource:acquire(Timeout) of
 	{resource, ok, Resource} ->
-	    connect(Host, File, Protos, Opts0, Timeout, Resource);
-	{resource, error, _Error} ->
-	    lager:warning("acquire resource failed, reason ~p", [_Error])
+	    case connect(Host, File, Protos, Opts0, Timeout, Resource) of
+		{ok, _Socket} = Reply ->
+		    Reply;
+		{error, _Error} = Reply ->
+		    exo_resource:release(Resource),
+		    Reply
+	    end;
+	{resource, error, Error} ->
+	    lager:warning("acquire resource failed, reason ~p", [Error]),
+	    {error, Error}
     end.
 
 connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource) 
