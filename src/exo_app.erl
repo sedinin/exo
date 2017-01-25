@@ -11,8 +11,11 @@
 
 -behaviour(application).
 
-%% Application callbacks
+%% application callbacks
 -export([start/2, stop/1]).
+
+%% test
+-export([start/0]).
 
 %% ===================================================================
 %% Application callbacks
@@ -24,3 +27,25 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok.
+
+start() ->
+   try application:ensure_all_started(exo)
+    catch
+	%% Old OTP version
+	error:undef ->
+	    each_application_([exo], [], temporary)
+    end.
+
+each_application_([App|Apps], Started, RestartType) ->
+    case application:start(App, RestartType) of
+	{error,{not_started,App1}} ->
+	    each_application_([App1,App|Apps],Started, RestartType);
+	{error,{already_started,App}} ->
+	    each_application_(Apps,Started, RestartType);
+	ok ->
+	    each_application_(Apps,[App|Started], RestartType);
+	Error ->
+	    Error
+    end;
+each_application_([], Started, _RestartType) ->
+    {ok, Started}.
