@@ -178,7 +178,7 @@ reusable_sessions(P) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Port,Protos,Options,Module,SessionOptions] = _X) ->
-    lager:debug("~p: init(~p)~n", [?MODULE, _X]),
+    lager:debug("~p: init(~p)", [?MODULE, _X]),
     Active = proplists:get_value(active, Options, true),
     ReuseMode = proplists:get_value(reuse_mode, Options, none),
     Options1 = proplists:delete(reuse_mode, proplists:delete(active, Options)),
@@ -195,6 +195,7 @@ init([Port,Protos,Options,Module,SessionOptions] = _X) ->
 	    %% Acquire resource for first connection
 	    Resource = make_ref(),
 	    exo_resource:acquire_async(Resource, infinity),
+	    lager:debug("~p: listening", [?MODULE]),
 	    {ok, #state{ listen = Listen, 
 			 active = Active, 
 			 socket_reuse = Reuse,
