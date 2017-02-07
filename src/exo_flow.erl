@@ -38,7 +38,8 @@
 	 fill/1,
 	 fill_time/2,
 	 wait/2,
-	 fill_wait/2]).
+	 fill_wait/2,
+	 statistics/1]).
 
 %% gen_server callbacks
 -export([init/1, 
@@ -306,6 +307,19 @@ fill_wait({Direction, _K} = Key, Tokens)
 
 %%--------------------------------------------------------------------
 %% @doc
+%% Get statistics for an owner
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec statistics(Owner::pid()) ->
+			list({Key::atom(), Value::term()}) |
+			{error, Error::atom()}.
+
+statistics(Owner) when is_pid(Owner)->
+    gen_server:call(?SERVER,{stats, Owner}).
+
+%%--------------------------------------------------------------------
+%% @doc
 %% Dumps data to standard output.
 %%
 %% @end
@@ -348,6 +362,7 @@ init(Args) ->
 %% Handling call messages.
 %% Request can be the following:
 %% <ul>
+%% <li> {stats, Owner} - Get owner statistics.</li>
 %% <li> dump - Writes loop data to standard out (for debugging).</li>
 %% <li> stop - Stops the application.</li>
 %% </ul>
@@ -355,6 +370,7 @@ init(Args) ->
 %% @end
 %%--------------------------------------------------------------------
 -type call_request()::
+	{stats, Owner::pid()} |
 	dump |
 	stop.
 
@@ -363,6 +379,9 @@ init(Args) ->
 			 {noreply, Ctx::#ctx{}} |
 			 {stop, Reason::atom(), Reply::term(), Ctx::#ctx{}}.
 
+handle_call({stats, Owner} = _Req, _From, Ctx=#ctx {owners = Owners}) ->
+    lager:debug("~p",[_Req]),
+    {reply, handle_stats(Owner, Owners), Ctx};
 handle_call(dump, _From, Ctx=#ctx {buckets = T}) ->
     io:format("Ctx: Buckets = ~p.", [ets:tab2list(T)]),
     {reply, ok, Ctx};
@@ -424,10 +443,11 @@ handle_cast(_Msg, Ctx) ->
 			 {noreply, Ctx::#ctx{}, Timeout::timeout()} |
 			 {stop, Reason::term(), Ctx::#ctx{}}.
 
-handle_info({'DOWN',Ref,process,_Pid,_Reason} = _I, Ctx=#ctx {owners = Owners}) ->
+handle_info({'DOWN',Ref,process,Pid,_Reason} = _I,
+	    Ctx=#ctx {owners = Owners}) ->
    lager:debug("info ~p", [_I]),
-    case ets_take(Owners, Ref) of
-	[{Ref, Key}] ->
+    case ets_take(Owners, {Pid, Ref}) of
+	[{{Pid, Ref}, Key}] ->
 	    erlang:demonitor(Ref, [flush]),
 	    ets:delete(?BUCKETS, {in, Key}),
 	    ets:delete(?BUCKETS, {out, Key}),
@@ -575,17 +595,34 @@ bucket_wait(B, Tokens)  when is_record(B, bucket) ->
 
 add_owner(Pid, Key, Owners) ->
     Ref = erlang:monitor(process, Pid),
-    ets:insert(Owners, {Key, Ref}), %% For remove
-    ets:insert(Owners, {Ref, Key}). %% For crash
+    ets:insert(Owners, {Key, {Pid, Ref}}), %% For remove, key is unique
+    ets:insert(Owners, {{Pid, Ref}, Key}). %% For crash, pid is NOT unique
  
 remove_owner(Key, Owners) ->
     case ets_take(Owners, Key) of
-	[{Key, Ref}] ->
+	[{Key, {_Pid, Ref} = PR}] ->
 	    erlang:demonitor(Ref, [flush]),
-	    ets:delete(Owners, Ref);
+	    ets:delete(Owners, PR);
 	_Other ->
 	    lager:warning("unexpected owner take result ~p", [_Other])
     end.	
+
+handle_stats(Owner, Owners) ->
+    case ets:foldl(
+	   fun({{Pid, _Ref}, Key}, Acc) when is_pid(Pid), Pid =:= Owner ->
+		   [stats(Key) | Acc];
+	      ({_Key, _PR}, Acc) ->
+		   Acc
+	   end, [], Owners) of
+	[] -> [];
+	Stats -> [{socket_stats, Stats}]
+    end.
+
+stats(Socket) ->
+    case inet:getstat(Socket) of
+	{ok, Stats} -> {Socket, Stats};
+	_ -> [] %% Not socket??
+    end.
 
 time_delta(T1, T0) ->
     (T1 - T0) / 1000000.
