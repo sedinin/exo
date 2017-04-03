@@ -49,6 +49,9 @@
 	 terminate/2, 
 	 code_change/3]).
 
+%% support api
+-export([buckets_exist/0]).
+
 %% test api
 -export([dump/0]).
 
@@ -317,6 +320,20 @@ fill_wait({Direction, _K} = Key, Tokens)
 
 statistics(Owner) when is_pid(Owner)->
     gen_server:call(?SERVER,{stats, Owner}).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% Checks if any buckets
+%%
+%% @end
+%%--------------------------------------------------------------------
+-spec buckets_exist() -> boolean().
+
+buckets_exist() ->
+    case ets:info(?BUCKETS, size) of
+	I when I > 0 -> true;
+	0 -> false
+    end.
 
 %%--------------------------------------------------------------------
 %% @doc
