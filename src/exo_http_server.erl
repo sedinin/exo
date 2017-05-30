@@ -251,10 +251,12 @@ handle_request(Socket, R, State) ->
 	   ?CRNL]]),
     case exo_http:recv_body(Socket, R) of
 	{ok, Body} ->
+	    lager:debug("body = ~s", [Body]),
 	    case handle_auth(Socket, R, Body, State) of
 		ok ->
 		    handle_body(Socket, R, Body, State);
 		{required,AuthenticateValue,State} ->
+		    lager:debug("autentication required"),
 		    V = response_r(Socket,R,401,"Unauthorized", "",
 				   [{'WWW-Authenticate', AuthenticateValue}]),
 		    case V of
@@ -262,6 +264,7 @@ handle_request(Socket, R, State) ->
 			stop -> {stop, normal, State}
 		    end;
 		{error, unauthorised} ->
+		    lager:debug("unauthorised"),
 		    V = response_r(Socket,R,401,"Unauthorized","",[]),
 		    case V of
 			ok -> {ok,State};
@@ -270,8 +273,10 @@ handle_request(Socket, R, State) ->
 	    end;
 
 	{error, closed} ->
+	    lager:warning("socket closed"),
 	    {stop, normal,State};
 	Error ->
+	    lager:warning("socket error ~p", [Error]),
 	    {stop, Error, State}
     end.
 

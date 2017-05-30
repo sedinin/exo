@@ -196,6 +196,7 @@ handle_access([{Tag, Path, User, Pass, Realm}| _T] = Creds,
 do(accept, _CredCallback) -> ok;
 do(reject, _CredCallback) -> {error, unauthorised};
 do({accept, AccessList}, _CredCallback = {M, F, Args}) ->
+    lager:debug("checking with ~p", [_CredCallback]),
     apply(M, F, [AccessList | Args]).
     
 match_access({any, GuardList}, Socket) ->
@@ -232,11 +233,14 @@ match_access({Ip, Port} = _Peer, Socket) ->
 	_ -> false
     end;
 match_access(Ip, Socket) ->
-    lager:debug("checking ~p", [Ip]),
+    lager:debug("checking ip ~p", [Ip]),
     case exo_socket:peername(Socket) of
 	{ok, {PeerIP, _Port}} -> 
+	    lager:debug("peer ip ~p", [PeerIP]),
 	    match_ip(Ip, PeerIP);
-	_ -> false
+	_Other ->
+	    lager:debug("no peer ip, got ~p", [_Other]),
+	    false
     end.
 
 match_ip({Pa,Pb,Pc,Pd}, {A,B,C,D}) ->
