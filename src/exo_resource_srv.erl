@@ -339,6 +339,8 @@ check_if_normal(normal, _Pid) ->
     ok;
 check_if_normal(shutdown, _Pid) ->
     ok;
+check_if_normal(killed, _Pid) ->
+    ok;
 check_if_normal(_Reason, _Pid) ->
     lager:warning("resource ~p DOWN, reason ~p",  [_Pid, _Reason]).
 
