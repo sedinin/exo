@@ -337,6 +337,8 @@ handle_down({'DOWN', Mon, process, Pid, Reason},
 
 check_if_normal(normal, _Pid) ->
     ok;
+check_if_normal(shutdown, _Pid) ->
+    ok;
 check_if_normal(_Reason, _Pid) ->
     lager:warning("resource ~p DOWN, reason ~p",  [_Pid, _Reason]).
 

@@ -438,9 +438,9 @@ create_socket_session(Listen, Socket, State) ->
 						 State#state.args]),
 		    activate_session(State, XState0);
 		_Error ->
-		    lager:warning("no socket session, "
-				  "async_socket call failed, reason ~p",
-				  [_Error]),
+		    lager:debug("no socket session, "
+				"async_socket call failed, reason ~p",
+				[_Error]),
 		    error
 	    end
     after 3000 ->
