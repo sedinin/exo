@@ -166,6 +166,13 @@ connect(Host, File, Protos, Opts0, Timeout) ->
 	    {error, Error}
     end.
 
+-spec connect(Host ::unix | term(), 
+	      FileOrPort::string() | integer(),
+	      Protos::list(atom()), Opts0::list(), 
+	      Timeout::integer(), Resource::term()) ->
+		     {ok, Socket::#exo_socket{}} |
+		     {error, Reason::atom()}.
+
 connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource) 
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
@@ -212,8 +219,7 @@ connect(Host, Port, Protos=[tcp|_], Opts0, Timeout, Resource) -> %% tcp socket
     Flow = proplists:get_value(flow, Opts2, undefined),
     case gen_tcp:connect(Host, Port, TcpConnectOpts, Timeout) of
 	{ok, S} ->
-	    X = 
-		#exo_socket { mdata   = gen_tcp,
+	    X = #exo_socket { mdata   = gen_tcp,
 			      mctl    = inet,
 			      protocol = Protos,
 			      transport = S,
@@ -234,8 +240,7 @@ connect(Host, Port, Protos=[tcp|_], Opts0, Timeout, Resource) -> %% tcp socket
 		    end;
 		Error -> Error
 	    end;
-	Error ->
-	    Error
+	Error -> Error
     end.
 
 maybe_auth(X, Opts) ->

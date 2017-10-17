@@ -43,7 +43,7 @@
 	  state::term(), %% Module state
 	  pending = []::list(),
 	  idle_timeout = infinity::timeout(),
-	  active_timer:: reference()
+	  active_timer:: reference() | undefined
 	 }).
 
 -include("exo_socket.hrl").
