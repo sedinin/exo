@@ -6,9 +6,9 @@
   {applications, [
                   kernel,
                   stdlib,
-		  lager,
-		  afunix,
-		  ssl
+                  lager,
+                  afunix,
+                  ssl
                  ]},
   {mod, { exo_app, []}},
   {env, []}

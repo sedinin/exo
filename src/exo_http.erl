@@ -20,7 +20,7 @@
 %%% @doc
 %%%    Hyper text transport protocol
 %%%
-%%% Created : 16 Dec 2011 by Tony Rogvall 
+%%% Created : 16 Dec 2011 by Tony Rogvall
 %%% @end
 
 -module(exo_http).
@@ -37,7 +37,7 @@
 -export([wtrace/1, wtrace/2, wtrace/3, wtrace/4]).
 -export([open/1, open/2, close/3]).
 -export([request/2, request/3, request/4, request/5]).
--export([send/2, send/3, send/4, send/7, 
+-export([send/2, send/3, send/4, send/7,
 	 send_body/2, send_chunk/2, send_chunk_end/2]).
 
 %% message interface
@@ -74,8 +74,8 @@
 	 format_hdr/1,
 	 fmt_chdr/1,
 	 fmt_shdr/1,
-	 make_request/4, 
-	 make_response/4, 
+	 make_request/4,
+	 make_response/4,
 	 auth_basic_encode/2,
 	 url_encode/1,
 	 make_headers/2,
@@ -161,7 +161,7 @@ wtrace(Url, Version, Hs,Timeout) ->
 %%
 %%     Content-type: multipart/<form>
 %%
-%%        - Data = [{file,ContentType,DispositionName,FileName}  | 
+%%        - Data = [{file,ContentType,DispositionName,FileName}  |
 %%                  {data,ContentType,DispositionName,<<bin>>} |
 %%                  <<bin>>]
 %%
@@ -192,7 +192,7 @@ wput(Url,Version,Hs,Data,Timeout) ->
 %%
 %%     Content-type: multipart/<form>
 %%
-%%        - Data = [{file,ContentType,DispositionName,FileName}  | 
+%%        - Data = [{file,ContentType,DispositionName,FileName}  |
 %%                  {data,ContentType,DispositionName,<<bin>>} |
 %%                  <<bin>>]
 %%
@@ -233,19 +233,19 @@ wpost_json_body(Req, Data) ->
 
 wpost_xml_body(Req, Data) ->
     {ok,Req,xmerl:export_simple(Data, xmerl_xml)}.
-    
+
 wpost_form_body(Req, Data) ->
     {ok,Req,format_query(Data)}.
 
 wpost_multi_body(Req, Data) ->
     H = Req#http_request.headers,
     Ct0 = H#http_chdr.content_type,
-    {Boundary,Req1} = 
+    {Boundary,Req1} =
 	case string:str(Ct0, "boundary=") of
 	    0 ->
-		<<Rnd64:64>> = crypto:rand_bytes(8),
+		<<Rnd64:64>> = crypto:strong_rand_bytes(8),
 		Bnd = integer_to_list(Rnd64),
-		Ct1 = H#http_chdr.content_type ++ 
+		Ct1 = H#http_chdr.content_type ++
 		    "; boundary=\""++Bnd ++"\"",
 		H1 = set_chdr('Content-Type', Ct1, H),
 		{Bnd, Req#http_request { headers = H1 }};
@@ -275,9 +275,9 @@ wpost_plain_body(Req, Data) ->
 	       [{file,_,_,FileName}] ->
 		   {ok,Bin} = file:read_file(FileName),
 		   Bin;
-	       [{data,_,Bin}] -> 
+	       [{data,_,Bin}] ->
 		   Bin;
-	       [{data,_,_,Bin}] -> 
+	       [{data,_,_,Bin}] ->
 		   Bin;
 	       List when is_list(List) ->
 		   list_to_binary(List)
@@ -379,7 +379,7 @@ xrequest(Proxy,Port,Req,Body,Timeout) ->
 	    end;
 	Error ->
 	    Error
-    end.	    
+    end.
 
 request(S, Req, Body, Proxy) ->
     request(S, Req, Body, Proxy, infinity).
@@ -398,14 +398,14 @@ request(S, Req, Body, Proxy, Timeout) ->
 			    lager:debug("body: ~p\n", [Error]),
 			    Error
 		    end;
-		Error -> 
+		Error ->
 		    lager:debug("response: ~p\n", [Error]),
 		    Error
 	    end;
 	Error -> Error
     end.
 
-open(Request) ->    
+open(Request) ->
     open(Request,infinity).
 
 open(Request,Timeout) ->
@@ -454,7 +454,7 @@ do_close(Req, Res) ->
     ResH = Res#http_response.headers,
     case tokens(ResH#http_shdr.connection) of
 	["close"] -> true;
-	["keep-alive"] -> 
+	["keep-alive"] ->
 	    %% Check {1,0} and keep-alive requested
 	    false;
 	_ ->
@@ -485,7 +485,7 @@ send(Socket, Method, URI, Version, H, Body, Proxy) ->
     Url = if is_record(URI, url) -> URI;
 	     is_list(URI) -> exo_url:parse(URI, sloppy)
 	  end,
-    H1 = 
+    H1 =
 	if H#http_chdr.host =:= undefined ->
 		H#http_chdr { host = Url#url.host };
 	   true ->
@@ -500,7 +500,7 @@ send(Socket, Method, URI, Version, H, Body, Proxy) ->
 	    true ->
 		 H1
 	 end,
-    H3 = if Version =:= {1,0}, 
+    H3 = if Version =:= {1,0},
 	    H1#http_chdr.connection =:= undefined ->
 		 H2#http_chdr { connection = "keep-alive" };
 	    true ->
@@ -512,7 +512,7 @@ send(Socket, Method, URI, Version, H, Body, Proxy) ->
     exo_socket:send(Socket, Request).
 
 %%
-%% Send "extra" body data not sent in the original send 
+%% Send "extra" body data not sent in the original send
 %%
 send_body(Socket, Body) ->
     exo_socket:send(Socket, Body).
@@ -587,8 +587,8 @@ recv_body(S, R) ->
 
 recv_body(S, R, Timeout) ->
     recv_body(S, R, fun (Data, Acc) -> [Data|Acc] end, [], Timeout).
-    
-recv_body(S, Request, Fun, Acc, Timeout) 
+
+recv_body(S, Request, Fun, Acc, Timeout)
   when is_record(Request, http_request) ->
     Method = Request#http_request.method,
     if Method =:= 'POST';
@@ -618,7 +618,7 @@ recv_body(S, Request, Fun, Acc, Timeout)
        true ->
 	    {ok, <<>>}
     end;
-recv_body(S, Response, Fun, Acc, Timeout) 
+recv_body(S, Response, Fun, Acc, Timeout)
   when is_record(Response, http_response) ->
     %% version 0.9  => read until eof
     %% version 1.0  => read either Content-Length or until eof
@@ -648,9 +648,9 @@ recv_body_eof(Socket) ->
 
 recv_body_eof(Socket,Timeout) ->
     recv_body_eof(Socket,fun(Data,Acc) -> [Data|Acc] end, [], Timeout).
-    
+
 recv_body_eof(Socket,Fun,Acc,Timeout) ->
-    lager:debug("RECV_BODY_EOF: tmo=~w\n", [Timeout]),    
+    lager:debug("RECV_BODY_EOF: tmo=~w\n", [Timeout]),
     exo_socket:setopts(Socket, [{packet,raw},{mode,binary}]),
     recv_body_eof1(Socket,Fun,Acc,Timeout).
 
@@ -675,7 +675,7 @@ recv_body_data(_Socket, 0, _Fun, _Acc, _Timeout) ->
     lager:debug("RECV_BODY_DATA: len=0, tmo=~w\n", [_Timeout]),
     {ok, <<>>};
 recv_body_data(Socket, Len, Fun, Acc, Timeout) ->
-    lager:debug("RECV_BODY_DATA: len=~p, tmo=~w\n", [Len,Timeout]),    
+    lager:debug("RECV_BODY_DATA: len=~p, tmo=~w\n", [Len,Timeout]),
     exo_socket:setopts(Socket, [{packet,raw},{mode,binary}]),
     case exo_socket:recv(Socket, Len, Timeout) of
 	{ok, Bin} ->
@@ -712,7 +712,7 @@ recv_body_chunk(S, Fun, Acc, Timeout) ->
 			    exo_socket:setopts(S, [{packet,http},
 						   {mode,binary}]),
 			    {ok,list_to_binary(lists:reverse(Acc))};
-			Error -> 
+			Error ->
 			    Error
 		    end;
 	       ChunkSize > 0 ->
@@ -758,10 +758,10 @@ recv_headers(S, R) ->
 recv_headers(S, R, Timeout) ->
     if is_record(R, http_request) ->
 	    recv_hc(S, R, #http_chdr { },Timeout);
-       is_record(R, http_response) ->       
+       is_record(R, http_response) ->
 	    recv_hs(S, R, #http_shdr { },Timeout)
     end.
-    
+
 
 recv_hc(S, R, H, Timeout) ->
     case exo_socket:recv(S, 0, Timeout) of
@@ -782,13 +782,13 @@ recv_hc(S, R, H, Timeout) ->
 		    lager:debug("HEADER ERROR ~p\n", [Got]),
 		    {error, Got}
 	    end;
-	{error, {http_error, ?CRNL}} -> 
+	{error, {http_error, ?CRNL}} ->
 	    lager:debug("ERROR CRNL <\n", []),
 	    recv_hc(S, R, H,Timeout);
-	{error, {http_error, ?NL}} -> 
+	{error, {http_error, ?NL}} ->
 	    lager:debug("ERROR NL <\n", []),
 	    recv_hc(S, R, H,Timeout);
-	Error -> 
+	Error ->
 	    lager:debug("RECV ERROR ~p <\n", [Error]),
 	    Error
     end.
@@ -811,10 +811,10 @@ recv_hs(S, R, H, Timeout) ->
 		Got ->
 		    {error, Got}
 	    end;
-	{error, {http_error, ?CRNL}} -> 
+	{error, {http_error, ?CRNL}} ->
 	    lager:debug("ERROR CRNL <\n", []),
 	    recv_hs(S, R, H,Timeout);
-	{error, {http_error, ?NL}} -> 
+	{error, {http_error, ?NL}} ->
 	    lager:debug("ERROR NL <\n", []),
 	    recv_hs(S, R, H, Timeout);
 	Error -> Error
@@ -852,7 +852,7 @@ format_request(Method, Url, Version, Proxy) ->
      end,
      " ",
      if is_record(Url, url) ->
-	     if Proxy =:= true -> 
+	     if Proxy =:= true ->
 		     exo_url:format(Url);
 		true ->
 		     exo_url:format_path(Url)
@@ -871,7 +871,7 @@ format_response(R) ->
 		    R#http_response.phrase).
 
 format_response({0,9}, _Status, _Phrase) -> "";
-format_response(Version, Status, Phrase) -> 
+format_response(Version, Status, Phrase) ->
     [case Version of
 	{1,0} ->  "HTTP/1.0";
 	{1,1}  -> "HTTP/1.1"
@@ -919,7 +919,7 @@ parse_seq(Cs) ->
 	     {url_decode(Key0),true}
      end || Kv <- string:tokens(Cs, "&")].
 
-%% query with alternative forms 
+%% query with alternative forms
 %% k1=v1&k2=v2;k1=v3;k3=v2  == ((k1=v1) AND (k2=v2)) OR (k1=v3) OR (k3=v2)
 parse_alt_query(Cs) ->
     case string:tokens(Cs,";") of  %% run disjunction
@@ -992,7 +992,7 @@ trim_([$\s|Cs]) -> trim_(Cs);
 trim_([$\t|Cs]) -> trim_(Cs);
 trim_(Cs) -> Cs.
 
-%% 
+%%
 %% Return Accept q-sorted list given a http request
 %%
 -spec accept_media(#http_request{}) -> [MediaType::string()].
@@ -1001,7 +1001,7 @@ accept_media(Request) ->
     Accept = (Request#http_request.headers)#http_chdr.accept,
     lager:debug("accept ~p", [Accept]),
     parse_accept(Accept).
-	    
+
 %% fixme: parse and return other media paramters, do proper handling of q
 parse_accept(undefined) ->
     [];
@@ -1020,7 +1020,7 @@ parse_accept([ [Media,"q="++QVal|_] | Types], Acc) ->
     end;
 parse_accept([ [Media|_] | Types], Acc) -> %% fixme
     parse_accept(Types, [{Media, 1.0} | Acc]);
-parse_accept([], Acc) -> 
+parse_accept([], Acc) ->
     [M || {M,_} <- lists:reverse(lists:keysort(2, Acc))].
 
 scan_accept(String) ->
@@ -1033,7 +1033,7 @@ to_number(String) ->
 	error:_ ->
 	    list_to_integer(String)
     end.
-    
+
 %%
 %% Encode basic authorization
 %%
@@ -1043,7 +1043,7 @@ auth_basic_encode(User,Pass) ->
     base64:encode_to_string(to_list(User)++":"++to_list(Pass)).
 
 make_headers(User, Pass) ->  %% bad name should go
-    make_basic_request(User, Pass). 
+    make_basic_request(User, Pass).
 
 make_basic_request(undefined, _Pass) -> [];
 make_basic_request(User, Pass) ->
@@ -1051,7 +1051,7 @@ make_basic_request(User, Pass) ->
 
 make_digest_request(undefined, _Params) -> [];
 make_digest_request(User, Params) ->
-    [{"Authorization", "Digest " ++ 
+    [{"Authorization", "Digest " ++
 	  make_param(<<"username">>,User) ++
 	  lookup_param(<<"realm">>, Params) ++
 	  lookup_param(<<"nonce">>, Params) ++
@@ -1144,7 +1144,7 @@ mk_shdr([{K,V}|Hs], H) ->
 mk_shdr([], H) ->
     H.
 
-set_shdr(K,V,H) -> 
+set_shdr(K,V,H) ->
     case K of
 	'Connection'        -> H#http_shdr { connection = V };
 	'Transfer-Encoding' -> H#http_shdr { transfer_encoding = V };
@@ -1152,7 +1152,7 @@ set_shdr(K,V,H) ->
 	'Set-Cookie'        -> H#http_shdr { set_cookie = V };
 	'Content-Length'    -> H#http_shdr { content_length = V };
 	'Content-Type'      -> H#http_shdr { content_type = V };
-	_ -> 
+	_ ->
 	    Hs = [{K,V} | H#http_shdr.other],
 	    H#http_shdr { other = Hs }
     end.
@@ -1165,7 +1165,7 @@ mk_chdr([{K,V}|Hs], H) ->
 mk_chdr([], H) ->
     H.
 
-set_chdr(K,V,H) ->    
+set_chdr(K,V,H) ->
     case K of
 	'Host'   -> H#http_chdr { host = V };
 	'Connection' -> H#http_chdr { connection = V };
@@ -1193,9 +1193,9 @@ set_chdr(K,V,H) ->
     end.
 
 format_hdr(H) when is_record(H, http_chdr) ->
-    fcons('Host', H#http_chdr.host, 
-    fcons('Connection', H#http_chdr.connection, 
-    fcons('Transfer-Encoding', H#http_chdr.transfer_encoding, 
+    fcons('Host', H#http_chdr.host,
+    fcons('Connection', H#http_chdr.connection,
+    fcons('Transfer-Encoding', H#http_chdr.transfer_encoding,
     fcons('Accept', H#http_chdr.accept,
     fcons('If-Modified-Since', H#http_chdr.if_modified_since,
     fcons('If-Match', H#http_chdr.if_match,
@@ -1213,7 +1213,7 @@ format_hdr(H) when is_record(H, http_chdr) ->
     fcons('Authorization', H#http_chdr.authorization,
 	  format_headers(H#http_chdr.other)))))))))))))))))));
 format_hdr(H) when is_record(H, http_shdr) ->
-    fcons('Connection', H#http_shdr.connection, 
+    fcons('Connection', H#http_shdr.connection,
     fcons('Transfer-Encoding', H#http_shdr.transfer_encoding,
     fcons('Location', H#http_shdr.location,
     fcons('Set-Cookie', H#http_shdr.set_cookie,
@@ -1222,16 +1222,16 @@ format_hdr(H) when is_record(H, http_shdr) ->
 	  format_headers(H#http_shdr.other))))))).
 
 
-%%    
-%% Convert the http_chdr (client header) structure into a 
+%%
+%% Convert the http_chdr (client header) structure into a
 %% key value list suitable for formatting.
 %% returns [ {Key,Value} ]
 %% Looks a bit strange, but is done this way to avoid creation
 %% of garabge.
 fmt_chdr(H) ->
-    hcons('Host', H#http_chdr.host, 
-    hcons('Connection', H#http_chdr.connection, 
-    hcons('Transfer-Encoding', H#http_chdr.transfer_encoding, 
+    hcons('Host', H#http_chdr.host,
+    hcons('Connection', H#http_chdr.connection,
+    hcons('Transfer-Encoding', H#http_chdr.transfer_encoding,
     hcons('Accept', H#http_chdr.accept,
     hcons('If-Modified-Since', H#http_chdr.if_modified_since,
     hcons('If-Match', H#http_chdr.if_match,
@@ -1249,11 +1249,11 @@ fmt_chdr(H) ->
     hcons('Authorization', H#http_chdr.authorization,
 	  H#http_chdr.other)))))))))))))))))).
 
-%% Convert the http_shdr (server header) structure into a 
+%% Convert the http_shdr (server header) structure into a
 %% key value list suitable for formatting.
 fmt_shdr(H) ->
-    hcons('Connection', H#http_shdr.connection, 
-    hcons('Transfer-Encoding', H#http_shdr.transfer_encoding, 
+    hcons('Connection', H#http_shdr.connection,
+    hcons('Transfer-Encoding', H#http_shdr.transfer_encoding,
     hcons('Location', H#http_shdr.location,
     hcons('Set-Cookie', H#http_shdr.set_cookie,
     hcons('Content-Length', H#http_shdr.content_length,
@@ -1261,7 +1261,7 @@ fmt_shdr(H) ->
 	  H#http_shdr.other)))))).
 
 hcons(_Key, undefined, Hs) -> Hs;
-hcons(Key, Val, Hs) -> 
+hcons(Key, Val, Hs) ->
     [{Key,Val} | Hs].
 
 hcons_list(Key, [V|Vs], Hs) ->
@@ -1286,7 +1286,7 @@ chunk_size(Line) ->
     chunk_size(Line, 0).
 
 chunk_size([H|Hs], N) ->
-    if 
+    if
 	H >= $0, H =< $9 ->
 	    chunk_size(Hs, (N bsl 4)+(H-$0));
 	H >= $a, H =< $f ->
@@ -1298,10 +1298,10 @@ chunk_size([H|Hs], N) ->
 	H =:= $\s -> {N, Hs};
 	H =:= $;  -> {N, [H|Hs]}
     end;
-chunk_size([], N) -> 
+chunk_size([], N) ->
     {N, ""}.
 
-tokens(undefined) -> 
+tokens(undefined) ->
     [];
 tokens(Line) ->
     string:tokens(string:to_lower(Line), ";").
@@ -1343,9 +1343,9 @@ make_digest_response(Cred, Method, AuthParams) ->
     DigestUriValue = proplists:get_value(<<"uri">>,AuthParams,""),
     %% FIXME! Verify Nonce!!!
     A1 = a1(Cred),
-    HA1 = hex(crypto:md5(A1)),
+    HA1 = hex(crypto:hash(md5, A1)),
     A2 = a2(Method, DigestUriValue),
-    HA2 = hex(crypto:md5(A2)),
+    HA2 = hex(crypto:hash(md5, A2)),
     hex(kd(HA1, Nonce++":"++HA2)).
 
 a1({digest,_Path,User,Password,Realm}) ->
@@ -1355,7 +1355,7 @@ a2(Method, Uri) ->
     iolist_to_binary([atom_to_list(Method),":",Uri]).
 
 kd(Secret, Data) ->
-    crypto:md5([Secret,":",Data]).
+    crypto:hash(md5, [Secret,":",Data]).
 
 hex(Bin) ->
     [ element(X+1, {$0,$1,$2,$3,$4,$5,$6,$7,$8,$9,$a,$b,$c,$d,$e,$f}) ||
@@ -1470,7 +1470,7 @@ format_timestamp({NowMs,NowS,NowU}) ->
     {{YYYY,MM,DD},{H,M,S}} = calendar:now_to_datetime({NowMs,NowS,NowU}),
     io_lib:format("~4..0w-~2..0w-~2..0w ~2..0w:~2..0w:~2..0w.~w",
 		  [YYYY,MM,DD,H,M,S,NowU]).
-    
+
 %% encode date into rfc1123-date (must be a GMT time!!!)
 format_date({{Y,M,D},{TH,TM,TS}}) ->
     WkDay = case calendar:day_of_the_week({Y,M,D}) of

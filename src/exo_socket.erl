@@ -19,7 +19,7 @@
 %%% @author Marina Westman Lönne <malotte@malotte.net>
 %%% @copyright (C) 2016, Tony Rogvall
 %%% @doc
-%%%    EXO socket 
+%%%    EXO socket
 %%%
 %%% Created : 15 Dec 2011 by Tony Rogvall
 %%% @end
@@ -73,7 +73,7 @@ listen(Port, Protos, Opts0) ->
 	    lager:warning("acquire resource failed, reason ~p", [_Error])
     end.
 
-listen(Port, Protos=[tcp|_], Opts0, Resource) 
+listen(Port, Protos=[tcp|_], Opts0, Resource)
   when is_integer(Port) -> %% tcp socket
     lager:debug("options=~w", [Opts0]),
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
@@ -105,7 +105,7 @@ listen(Port, Protos=[tcp|_], Opts0, Resource)
 	Error ->
 	    Error
     end;
-listen(File, Protos=[tcp|_], Opts0, Resource) 
+listen(File, Protos=[tcp|_], Opts0, Resource)
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
@@ -139,7 +139,7 @@ listen(File, Protos=[tcp|_], Opts0, Resource)
 	    Error
     end.
 
-%% 
+%%
 %%
 %%
 connect(Host, Port) ->
@@ -166,14 +166,14 @@ connect(Host, File, Protos, Opts0, Timeout) ->
 	    {error, Error}
     end.
 
--spec connect(Host ::unix | term(), 
+-spec connect(Host ::unix | term(),
 	      FileOrPort::string() | integer(),
-	      Protos::list(atom()), Opts0::list(), 
+	      Protos::list(atom()), Opts0::list(),
 	      Timeout::integer(), Resource::term()) ->
 		     {ok, Socket::#exo_socket{}} |
 		     {error, Reason::atom()}.
 
-connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource) 
+connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource)
   when is_list(File) -> %% unix domain socket
     Opts1 = proplists:expand([{binary, [{mode, binary}]},
 			      {list, [{mode, list}]}], Opts0),
@@ -186,7 +186,7 @@ connect(unix, File, Protos=[tcp|_], Opts0, Timeout, Resource)
     Flow = proplists:get_value(flow, Opts2, undefined),
     case afunix:connect(File, TcpConnectOpts, Timeout) of
 	{ok, S} ->
-	    X = 
+	    X =
 		#exo_socket { mdata   = afunix,
 			      mctl    = afunix,
 			      protocol = Protos,
@@ -233,7 +233,7 @@ connect(Host, Port, Protos=[tcp|_], Opts0, Timeout, Resource) -> %% tcp socket
 			      resource = Resource
 			    },
 	    case connect_upgrade(X, tl(Protos), Timeout) of
-		{ok, X1} -> 
+		{ok, X1} ->
 		    case maybe_auth(X1, client, Opts2) of
 			{ok, X2} -> maybe_flow_control(X2);
 			Error -> Error
@@ -266,7 +266,7 @@ maybe_auth_(X, Role0, Opts) ->
 	    %% Here, we should check if the session is already authenticated
 	    %% Otherwise, initiate user-level authentication.
 	    case lists:keyfind(Role, 1, L) of
-		false -> 
+		false ->
 		    {ok, X};
 		{_, ROpts} ->
 		    lager:debug("ROpts = ~p~n", [ROpts]),
@@ -288,10 +288,10 @@ maybe_auth_(X, Role0, Opts) ->
 						[Other]),
 				    {error, Other}
 			    catch
-				error:Err ->
+				error:Err:Stack ->
 				    lager:debug("Caught error: ~p~n"
 						"Trace = ~p~n",
-						[Err, erlang:get_stacktrace()]),
+						[Err, Stack]),
 				    shutdown(X, write),
 				    {error, einval}
 			    end;
@@ -353,12 +353,12 @@ connect_upgrade(X, Protos0, Timeout) ->
 	    end;
 	[http|Protos1] ->
 	    {_, Close,Error} = X#exo_socket.tags,
-	    X1 = X#exo_socket { packet = http, 
+	    X1 = X#exo_socket { packet = http,
 				tags = {http, Close, Error }},
 	    connect_upgrade(X1, Protos1, Timeout);
 	[mqtt|Protos1] ->
 	    {_, Close,Error} = X#exo_socket.tags,
-	    X1 = X#exo_socket { packet = raw, 
+	    X1 = X#exo_socket { packet = raw,
 				tags = {mqtt, Close, Error }},
 	    connect_upgrade(X1, Protos1, Timeout);
 	[] ->
@@ -369,8 +369,8 @@ connect_upgrade(X, Protos0, Timeout) ->
 			[getopts(X, [active,packet,mode])]),
 	    {ok,X}
     end.
-			       
-ssl_connect(Socket, Options, Timeout) ->    
+
+ssl_connect(Socket, Options, Timeout) ->
     try
 	begin
 	    case ssl:connect(Socket, Options, Timeout) of
@@ -429,12 +429,12 @@ async_socket(Listen, Socket, AuthOpts, Timeout)
 		    inet_db:register_socket(Socket, Mod),
 		    X = Listen#exo_socket {transport=Socket, socket=Socket},
 		    case accept_upgrade(X,
-					tl(X#exo_socket.protocol), 
+					tl(X#exo_socket.protocol),
 					Timeout) of
-			{ok, X1} -> 
+			{ok, X1} ->
 			    case maybe_auth(X1,server,
 					    X#exo_socket.opts ++ AuthOpts) of
-				{ok, X2} -> 
+				{ok, X2} ->
 				    maybe_flow_control(X2);
 				Error ->
 				    prim_inet:close(Socket),
@@ -459,12 +459,12 @@ async_socket(Listen, Socket, AuthOpts, Timeout)
 	    Error
     end.
 
-    
+
 accept(X) when is_record(X, exo_socket) ->
     accept_upgrade(X, X#exo_socket.protocol, infinity).
 
-accept(X, Timeout) when 
-      is_record(X, exo_socket), 
+accept(X, Timeout) when
+      is_record(X, exo_socket),
       (Timeout =:= infnity orelse (is_integer(Timeout) andalso Timeout >= 0)) ->
     accept_upgrade(X, X#exo_socket.protocol, Timeout).
 
@@ -495,7 +495,7 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	       true ->
 		    ok
 	    end,
-	    
+
 	    case ssl_accept(X#exo_socket.socket, SSLOpts, Timeout) of
 		{ok,S1} ->
 		    lager:debug("ssl_accept opt=~w",
@@ -514,12 +514,12 @@ accept_upgrade(X=#exo_socket { mdata = M }, Protos0, Timeout) ->
 	    accept_probe_ssl(X,Protos1,Timeout);
 	[http|Protos1] ->
 	    {_, Close,Error} = X#exo_socket.tags,
-	    X1 = X#exo_socket { packet = http, 
+	    X1 = X#exo_socket { packet = http,
 				tags = {http, Close, Error }},
 	    accept_upgrade(X1,Protos1,Timeout);
 	[mqtt|Protos1] ->
 	    {_, Close,Error} = X#exo_socket.tags,
-	    X1 = X#exo_socket { packet = mqtt, 
+	    X1 = X#exo_socket { packet = mqtt,
 				tags = {mqtt, Close, Error }},
 	    accept_upgrade(X1,Protos1,Timeout);
 	[] ->
@@ -567,13 +567,13 @@ accept_probe_ssl(X=#exo_socket { mdata=M, socket=S,
 	    {error,timeout}
     end.
 
-ssl_accept(Socket, Options, Timeout) -> 
+ssl_accept(Socket, Options, Timeout) ->
     try
 	begin
-	    case ssl:ssl_accept(Socket, Options, Timeout) of
+	    case ssl:handshake(Socket, Options, Timeout) of
 		{error, ssl_not_started} ->
 		    ssl:start(),
-		    ssl:ssl_accept(Socket, Options, Timeout);
+		    ssl:handshake(Socket, Options, Timeout);
 		Result ->
 		    Result
 	    end
@@ -595,12 +595,12 @@ request_type(<<"POST", _/binary>>) ->    http;
 request_type(<<"OPTIONS", _/binary>>) ->  http;
 request_type(<<"TRACE", _/binary>>) ->    http;
 request_type(<<1:1,_Len:15,1:8,_Version:16, _/binary>>) -> ssl;
-request_type(<<ContentType:8, _Version:16, _Length:16, _/binary>>) 
+request_type(<<ContentType:8, _Version:16, _Length:16, _/binary>>)
   when ContentType =:= 22 -> ssl;
-request_type(<<PacketType:4, _Dup:1, _QoS:2, _Retain:1, _Rest/binary>>) 
+request_type(<<PacketType:4, _Dup:1, _QoS:2, _Retain:1, _Rest/binary>>)
   when PacketType < 15 -> mqtt;
 request_type(_) -> undefined.
-    
+
 %%
 %% exo_socket wrapper for socket operations
 %%
@@ -614,7 +614,7 @@ close(#exo_socket { mdata = M, socket = S, resource = R, transport = T}) ->
 
 shutdown(#exo_socket {mdata = M, socket = S}, How) ->
     M:shutdown(S, How).
-    
+
 send(#exo_socket {flow = undefined} = X, Data) ->
     send1(X, Data);
 send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
@@ -622,7 +622,7 @@ send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
     {ok, Tokens} = exo_flow:fill({out,T}),
     lager:debug("tokens in bucket ~p", [Tokens]),
     case exo_flow:use({out,T}, 1) of
-	ok -> 
+	ok ->
 	    send1(X, Data);
 	{action, throw} ->
 	    lager:warning("Message ~p thrown due to overload protection",
@@ -636,11 +636,11 @@ send(X=#exo_socket {socket = S, transport = T} = X, Data) ->
 	    lager:debug("use error ~p", [_E]),
 	    E
     end.
-	    
+
 send1(#exo_socket { mdata = M, socket = S, mauth = undefined}, Data) ->
     lager:debug("using ~p to send ~p", [M, Data]),
     M:send(S, Data);
-send1(#exo_socket { mdata = M, socket = S, mauth = A, auth_state = Sa} = X, 
+send1(#exo_socket { mdata = M, socket = S, mauth = A, auth_state = Sa} = X,
       Data) ->
     try M:send(S, A:outgoing(Data, Sa))
     catch
@@ -686,7 +686,7 @@ peername(#exo_socket { mctl = M, socket = S}) ->
 
 is_ssl(#exo_socket { mctl = ssl}) -> true;
 is_ssl(_) -> false.
-    
+
 stats() ->
     inet:stats().
 
@@ -738,11 +738,11 @@ tcp_connect_options() ->
 
 
 ssl_listen_opts() ->
-    [versions, verify, verify_fun, 
+    [versions, verify, verify_fun,
      fail_if_no_peer_cert, verify_client_once,
-     depth, cert, certfile, key, keyfile, 
+     depth, cert, certfile, key, keyfile,
      password, cacerts, cacertfile, dh, dhfile, cihpers,
-     %% deprecated soon 
+     %% deprecated soon
      ssl_imp,   %% always new!
      %% server
      verify_client_once,
@@ -751,10 +751,8 @@ ssl_listen_opts() ->
      debug, hibernate_after, erl_dist ].
 
 ssl_connect_opts() ->
-    [versions, verify, verify_fun, 
+    [versions, verify, verify_fun,
      fail_if_no_peer_cert,
-     depth, cert, certfile, key, keyfile, 
+     depth, cert, certfile, key, keyfile,
      password, cacerts, cacertfile, dh, dhfile, cihpers,
      debug].
-
-

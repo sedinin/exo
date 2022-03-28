@@ -97,14 +97,14 @@ start_link(Port, Options) ->
 
 do_start(Start, Port, Options) ->
     lager:debug("~w: port ~p, server options ~p", [Start, Port, Options]),
-    {SessionOptions,Options1} = 
+    {SessionOptions,Options1} =
 	exo_lib:split_options([request_handler,access,private_key,idle_timeout],
 			      Options),
     Dir = code:priv_dir(exo),
     Access = proplists:get_value(access, Options, []),
     case exo_lib:validate_access(Access) of
 	ok ->
-	    exo_socket_server:Start(Port, 
+	    exo_socket_server:Start(Port,
 				    [tcp,probe_ssl,http],
 				    [{active,once},{reuseaddr,true},
 				     {verify, verify_none},
@@ -280,17 +280,17 @@ handle_request(Socket, R, State) ->
 	    {stop, Error, State}
     end.
 
-handle_auth(_Socket, _Request, _Body, State) 
+handle_auth(_Socket, _Request, _Body, State)
   when State#state.authorized ->
     ok;
-handle_auth(_Socket, _Request, _Body, State=#state {access = []}) 
+handle_auth(_Socket, _Request, _Body, State=#state {access = []})
   when not State#state.authorized ->
     %% No access specied, all is allowed.
     ok;
-handle_auth(Socket, Request, Body, State=#state {access = Access})  
+handle_auth(Socket, Request, Body, State=#state {access = Access})
   when not State#state.authorized ->
-    exo_lib:handle_access(Access, Socket,  
-			  {?MODULE, handle_creds, 
+    exo_lib:handle_access(Access, Socket,
+			  {?MODULE, handle_creds,
 			   [Socket, Request, Body, State]}).
 
 
@@ -308,7 +308,7 @@ handle_creds(Creds, Socket, Request, Body, State) ->
 				       Cred, State);
 	[] -> ok
     end.
-    
+
 handle_basic_auth(_Socket, _Request, _Body, {basic,AuthParams},
 		  _Cred={basic,_Path,User,Password,Realm}, State) ->
     AuthUser =  proplists:get_value(<<"user">>, AuthParams),
@@ -348,7 +348,7 @@ nonce_value(Request, State) ->
     ETag = unq(proplists:get_value('ETag',Header#http_chdr.other,"")),
     T = now64(),
     TimeStamp = hex(<<T:64>>),
-    hex(crypto:md5([TimeStamp,":",ETag,":",State#state.private_key])).
+    hex(crypto:hash(md5, [TimeStamp,":",ETag,":",State#state.private_key])).
 
 
 %% convert binary to ASCII hex
@@ -361,7 +361,7 @@ now64() ->
 	erlang:system_time(milli_seconds)
     catch
 	error:undef ->
-	    {M,S,Us} = erlang:now(),
+	    {M,S,Us} = erlang:timestamp(),
 	    (M*1000000+S)*1000000+Us
     end.
 
